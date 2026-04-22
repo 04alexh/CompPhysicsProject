@@ -1,0 +1,83 @@
+#getting the packages
+import numpy as np
+import sympy as sp
+
+#INPUT YOUR COORDINATES BELOW
+
+#I am making the coordnates saved as a 4 list so we can keep 
+#everything more organized 
+coords = sp.symbols('t r theta phi')
+
+
+g = sp.Matrix([
+    [-(1 - 2*M/r), 0, 0, 0],
+    [0, 1/(1 - 2*M/r), 0, 0],
+    [0, 0, r**2, 0],
+    [0, 0, 0, r**2*sp.sin(theta)**2]
+])
+
+#IF YOU HAVE ANY SYMBOLS THAT ARE NOT THE COORDINATE SYMBOLS (like M) input them below
+#need to save M as a synbol or derivates break
+M = sp.Symbol('M')
+
+
+#adds the user inputted symbols as the coordinates
+for c in coords:
+    globals()[str(c)] = c
+#this auto creates
+#t = coords[0]
+#r = coords[1]
+#theta = coords[2]
+
+
+#check to see if everything for user input is filled out correclty
+assert len(coords) == 4
+assert g.shape == (4,4)
+
+#building a dictionary so the user inputted coordinates
+#can be translated to numbers 
+#i am mildly reworking ur notation so script can work with every coordinate
+indices = {i: coords[i] for i in range(4)}
+
+
+
+'''
+t , r , theta , phi= sp.symbols('t r theta phi')
+M = 5
+g = sp.Matrix([[-(1 - 2*M/r) , 0 , 0 , 0] , [0 , 1/(1 - 2*M/r) , 0, 0] , [0 , 0 , r**2 , 0] , [0 , 0 , 0 , r**2 * sp.sin(theta)**2]])
+print(g)
+
+indices = {0:t , 1:r , 2:theta , 3:phi}
+print(indices[0])
+ginv = g.inv()
+print(ginv)
+'''
+
+#calculate inverse metric
+ginv = g.inv()
+
+christoffel = sp.MutableDenseNDimArray.zeros(4,4,4)
+for mu in range(0 , 4):
+    for nu in range(0 , 4):
+        for rho in range(0 , 4):
+            expr = 0
+            for sig in range(0 , 4):
+                expr += .5 * ginv[mu , sig] * (
+                    sp.diff(g[rho , sig] , indices[nu]) +
+                    sp.diff(g[nu , sig] , indices[rho]) -
+                    sp.diff(g[nu , rho] , indices[sig])
+                )
+            christoffel[mu , nu , rho] = expr
+
+print(christoffel)
+
+#
+# dlam = .01
+# tlam = 1000
+# nlam = int(tlam / dlam)
+#
+# lam = np.zeros(nlam)
+#
+# for l in range(0 , nlam - 1):
+
+
