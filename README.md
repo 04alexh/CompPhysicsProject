@@ -5,4 +5,4 @@ This repo contains our final project for PHYS 3120: Computational Physics. The S
 
 ### Information about Code
 
-Our code/process write up is in the repo. Additionally, this link goes to our video presentation if required: [https://youtu.be/67hYwWGR9pU](url)
+Our code/process write up is in the repo. Additionally, this link goes to our video presentation if required: https://youtu.be/67hYwWGR9pU
