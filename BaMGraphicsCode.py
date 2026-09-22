@@ -7,26 +7,27 @@ import sympy as sp
 ##### END OF IMPORTS #####
 
 
-
-
 ##### GRAPHICS INPUTS #####
 
 #INPUT: Please type the filepath to the simulation data you want to visualize.
-data_path = "geodesicOutput_20260921_230429.npz"
+data_path = "geodesicOutput_20260922_002622.npz"
 
 #INPUT: Please select which visualizations you would like.
-static2D_plots = False
+static2D_plots = True
 animation2D = False
-animation3D = True
+animation3D = False
 
 #INPUT: Please indicate if you want parameterization by affine parameter or timelike coordinate.
 param_by_affine = False
 
 #INPUT: If doing 3D animation, indicate if you want singularities visualized.
-visualize_singularities = True
+visualize_singularities = False
 
 #INPUT: If doing 3D animation, indicate if you want EM fields visualized.
-visualize_EM = True
+visualize_EM = False
+
+#INPUT: If doing 3D animation, indicate if you want the effects of gravity visualized.
+visualize_gravity = False
 
 ##### END OF GRAPHICS INPUTS #####
 
@@ -835,7 +836,8 @@ def plotSingGeo(
 
 
 ### Define function to make 3D animation of the trajectory
-def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_sings = False , plot_em = False):
+def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
+                    plot_sings = False , plot_em = False , plot_gravity = False):
 
     # Unpack the data
     data = np.load(data_path , allow_pickle = True)
@@ -1084,11 +1086,14 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_
     # This calculates the E and B for each frame
     if plot_em:
 
-        # Store E and B vectors for each frame
+        # Store E and B vectors for each frame, as well as container for the EM "acceleration"
         E_frames = np.zeros(
             (nframes , 3)
         )
         B_frames = np.zeros(
+            (nframes , 3)
+        )
+        aem_frames = np.zeros(
             (nframes , 3)
         )
 
@@ -1378,6 +1383,322 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_
             E_frames[frame] = E_xyz
             B_frames[frame] = B_xyz
 
+
+            ### Lets also make an "acceleration" vector due to the E and B fields!
+            particle_mass = particle_info[0]
+            particle_charge = particle_info[1]
+
+            # Raise one index of F
+            # F_rhonu * g^rhomu = F^mu_nu
+            F_1co1contra = np.zeros((4, 4))
+
+            for mu in range(0, 4):
+                for nu in range(0, 4):
+                    expr = 0
+                    for rho in range(0, 4):
+                        expr += F_num[rho, nu] * ginv[mu, rho]
+                    F_1co1contra[mu, nu] = expr
+
+            # Calculate the EM 4-acceleration:
+            # aEM^mu = (q/m) * F^mu_nu * u^nu
+            a_em = np.zeros(4)
+
+            for mu in range(0, 4):
+                expr = 0
+                for nu in range(0, 4):
+                    expr += (
+                            (particle_charge / particle_mass)
+                            * F_1co1contra[mu, nu]
+                            * u[nu]
+                    )
+                a_em[mu] = expr
+
+            # We have to do all the projections
+            # Project a_em onto particles local spatial frame
+            local_aem = np.zeros(3)
+
+            for i in range(0, min(3, len(spatial_basis))):
+
+                basis = spatial_basis[i]
+                expr = 0
+                for mu in range(0, 4):
+                    for nu in range(0, 4):
+                        expr += g_num[mu, nu] * a_em[mu] * basis[nu]
+                local_aem[i] = expr
+
+            # Project local aem to spatial coords
+            coord_aem = np.zeros(3)
+
+            for i in range(0, min(3, len(spatial_basis))):
+                coord_aem += (
+                        local_aem[i] * spatial_basis[i][1:4]
+                )
+
+            # Convert to XYZ anim coords
+            aem_xyz = (
+                J @ coord_aem
+            )
+            aem_frames[frame] = aem_xyz
+
+
+    # Additionally, if desired we can plot the effects of gravity
+    # In theory, gravity actually causes no acceleration on the particle
+    # Gravity however is the curvature of spacetime --> nonzero Riemann Tensor
+    # Riemann tensor measured geodesic deviation ie in what way to geodesics diverge/converge
+    # We can instead measure the magnitude and direction of such "deviations" to get a good viz of gravity
+    if plot_gravity:
+
+        # Create transform Jacobian to make future calculations easier
+        cart_expr = sp.Matrix([
+            x_expr,
+            y_expr,
+            z_expr
+        ])
+        cart_jac_expr = cart_expr.jacobian(
+            sp.Matrix(coords[1:4])
+        )
+        cart_jac_func = sp.lambdify(
+            coords,
+            cart_jac_expr,
+            "numpy"
+        )
+
+        # Unpack metric and connections
+        metric_expr = sp.Matrix(
+            [
+                list(row) for row in data["metric"]
+            ]
+        )
+        christoffels_expr = sp.MutableDenseNDimArray(
+            data["christos"]
+        )
+
+        # Calculate symbolic Riemann tensor
+        ### Define function for calculation of the Riemann tensor
+        def calcRiemann(christoffels, coords, indices):
+
+            # Initialize the Riemann tensor as a 4x4x4x4 array
+            Riemann = sp.MutableDenseNDimArray.zeros(4, 4, 4, 4)
+
+            # Calculate the Riemann tensor according to:
+            # R^rho_sigmamunu = d_mu Gamma^rho_nusigma - d_nu Gamma^rho_musigma + Gamma^rho_mulambda * Gamma^lambda_nusigma - Gamma^rho_nulambda * Gamma^lambda_musigma
+            for a in range(0, 4):
+                for b in range(0, 4):
+                    for c in range(0, 4):
+                        for d in range(0, 4):  # abc are lower, d is upper
+                            expr = 0
+                            for e in range(0, 4):
+                                expr += (
+                                        christoffels[e, a, c] * christoffels[d, b, e] -
+                                        christoffels[e, a, b] * christoffels[d, c, e]
+                                )
+                            Riemann[d, a, b, c] = (
+                                    sp.diff(christoffels[d, a, c], indices[b]) -
+                                    sp.diff(christoffels[d, a, b], indices[c]) +
+                                    expr)
+
+
+            return Riemann
+        riemann_expr = calcRiemann(christoffels = christoffels_expr, coords = coords , indices = {i : coords[i] for i in range(0 , 4)})
+
+        # Lambdify
+        metric_func = sp.lambdify(
+            coords,
+            metric_expr,
+            "numpy"
+        )
+
+        # To lambdify Riemann, have to convert to list first because sympy doesnt like lambdifiying mutabledensearrays
+        riemann_expr_list = riemann_expr.tolist()
+        Riemann_func = sp.lambdify(
+            coords,
+            riemann_expr_list,
+            "numpy"
+        )
+
+        # Create storage of the 3 tidal acceleration vectors
+        tidal_frames = np.zeros(
+            (nframes , 3 , 3)
+        )
+
+        # Calculate tidal accel at every animation frame
+        for frame in range(0 , nframes):
+
+            # Get position and 4-velo depending on lambda or timelike param
+            if param_by_affine == False:
+                position = np.array(
+                    [
+                        np.interp(
+                            param_frames[frame] ,
+                            t ,
+                            y[i]
+                        )
+                        for i in range(0 , 4)
+                    ] ,
+                    dtype = float
+                )
+                u = np.array(
+                    [
+                        np.interp(
+                            param_frames[frame] ,
+                            t ,
+                            y[4 + i]
+                        )
+                        for i in range(0 , 4)
+                    ] ,
+                    dtype = float
+                )
+
+            else:
+                position = np.array(
+                    [
+                        np.interp(
+                            param_frames[frame] ,
+                            lam ,
+                            y[i]
+                        )
+                        for i in range(0 , 4)
+                    ] ,
+                    dtype = float
+                )
+                u = np.array(
+                    [
+                        np.interp(
+                            param_frames[frame] ,
+                            lam ,
+                            y[4 + i]
+                        )
+                        for i in range(0 , 4)
+                    ] ,
+                    dtype = float
+                )
+
+            # Evaluate metric and Riemann tensor at this position
+            g_num = np.asarray(
+                metric_func(*position) ,
+                dtype = float
+            )
+            R_num = np.asarray(
+                Riemann_func(*position) ,
+                dtype = float
+            )
+
+            # Construct local orthonormal basis yaya (same as EM viz method, create orthogonal vector to ut and gram schmit it)
+            spatial_basis = []
+
+            for spatial_index in range(1, 4):
+
+                basis = np.zeros(4)
+                basis[spatial_index] = 1
+
+                # Project coordinate basis vector perp to the particle's 4-velo
+                # This is because the particle's 4-velo acts as its "time direction"
+                # For an orthogonal coord system all spatial vectors should be perp to this direction
+                # Inner product of basis and u: g_munu * basis^mu * u^nu
+                inner = 0
+                for mu in range(0, 4):
+                    for nu in range(0, 4):
+                        inner += g_num[mu, nu] * basis[mu] * u[nu]
+                projected = (
+                        basis + inner * u
+                )
+
+                # Gram-Schmidt using previous basis to make orthogonal basis
+                for previous in spatial_basis:
+
+                    projection = 0
+                    for mu in range(0, 4):
+                        for nu in range(0, 4):
+                            projection += g_num[mu, nu] * previous[mu] * projected[nu]
+
+                    projected -= (
+                            projection * previous
+                    )
+
+                # Normalize basis so its fully orthonormal
+                norm_square = 0
+                for mu in range(0, 4):
+                    for nu in range(0, 4):
+                        norm_square += g_num[mu, nu] * projected[mu] * projected[nu]
+
+                if norm_square <= 0:
+                    continue  # Skip if timelike
+
+                projected /= np.sqrt(norm_square)
+                spatial_basis.append(projected)
+
+            ### Now let's calculate the tidal accel for each local basis direction
+            # Construct cartesian jacobian for ez computations
+            J = np.asarray(
+                cart_jac_func(*position),
+                dtype=float
+            )
+
+            # Iterate through local direction
+            for direction in range(0 , min(3 , len(spatial_basis))):
+
+                xi = spatial_basis[direction]
+
+                # The geodesic deviation equation is
+                # (d^2x^mu/dlambda^2) = "a^mu" = -R^mu_nurhosigma * u^nu * xi^rho * u^sigma
+                # What is going on here?
+                # a^mu is the "acceleration" of two geodesics ie how does the distance between two geodesics change over time over time
+                # xi is the distance vector between the two geodesics
+                # u is the tangent vector for the particle
+                # R is the riemann tensor and it quantifies the curvature, this curvature causes the deviation
+
+                a_tidal = np.zeros(4)
+                for mu in range(0 , 4):
+                    expr = 0
+                    for nu in range(0, 4):
+                        for rho in range(0 , 4):
+                            for sigma in range(0 , 4):
+                                expr += (
+                                    (-1)
+                                    * R_num[mu , nu , rho , sigma]
+                                    * u[nu]
+                                    * xi[rho]
+                                    * u[sigma]
+                                )
+                    a_tidal[mu] = expr
+
+                # Project tidal acceleration vector onto local spatial basis
+                local_tidal = np.zeros(3)
+
+                for basis_index in range(0 , min(3 , len(spatial_basis))):
+
+                    basis = spatial_basis[basis_index]
+
+                    # a_tidal DOT specific_basis = g_munu * a_tidal^mu * specifc_basis^nu = local_a in specified basis direction
+                    expr = 0
+                    for mu in range(0 , 4):
+                        for nu in range(0, 4):
+                            expr += g_num[mu , nu] * a_tidal[mu] * basis[nu]
+                    local_tidal[basis_index] = expr
+
+                # Project local spatial acceleration to the coordinate spatial vector (coords of metric)
+                spatial_vector = np.zeros(3)
+
+                for basis_index in range(0 , min(3 , len(spatial_basis))):
+
+                    spatial_vector += (
+                        local_tidal[basis_index]
+                        * spatial_basis[basis_index][1:4]
+                    )
+
+                # Convert coordinate spatial vectors into the cartesian XYZ for animation
+                cart_vector = (
+                    J @ spatial_vector
+                )
+
+                tidal_frames[
+                    frame ,
+                    direction ,
+                    :
+                ] = cart_vector
+
+
+
     # Scale axes equally
     xmin , xmax = np.nanmin(X) , np.nanmax(X)
     ymin , ymax = np.nanmin(Y) , np.nanmax(Y)
@@ -1448,6 +1769,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_
     # If desiring the E and B visualized, this will draw initial vector arrows on the particle
     E_arrow = None
     B_arrow = None
+    aem_arrow = None
     if plot_em:
 
         E_arrow = ax.quiver(
@@ -1473,6 +1795,37 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_
             length = 1 ,
             normalize = False
         )
+
+        aem_arrow = ax.quiver(
+            X_frames[0] ,
+            Y_frames[0] ,
+            Z_frames[0] ,
+            aem_frames[0 , 0] ,
+            aem_frames[0 , 1] ,
+            aem_frames[0 , 2] ,
+            color = "purple" ,
+            length = 1 ,
+            normalize = False
+        )
+
+    # If desiring the graviational tidal effects visualized, draw the initial vector arrows on the particle
+    tidal_arrows = []
+    if plot_gravity:
+
+        for direction in range(0 , 3):
+
+            arrow = ax.quiver(
+                X_frames[0] ,
+                Y_frames[0] ,
+                Z_frames[0] ,
+                tidal_frames[0 , direction , 0] ,
+                tidal_frames[0 , direction , 1] ,
+                tidal_frames[0 , direction , 2] ,
+                color = "green" ,
+                length = 1 ,
+                normalize = False
+            )
+            tidal_arrows.append(arrow)
 
     # Initialize counters for lambda/timelike coord and XYZ positions and 3-speed and legend
     time_txt = fig.text(
@@ -1531,7 +1884,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_
     ### Define the animation update function
     def update(frame):
 
-        nonlocal E_arrow , B_arrow
+        nonlocal E_arrow , B_arrow , aem_arrow , tidal_arrows
         frame = int(frame)
 
         # Set trail
@@ -1557,6 +1910,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_
 
             E_arrow.remove()
             B_arrow.remove()
+            aem_arrow.remove()
 
             E_arrow = ax.quiver(
                 X_frames[frame] ,
@@ -1580,6 +1934,40 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_
                 length = 1 ,
                 normalize = False
             )
+            aem_arrow = ax.quiver(
+                X_frames[frame] ,
+                Y_frames[frame] ,
+                Z_frames[frame] ,
+                aem_frames[frame , 0] ,
+                aem_frames[frame , 1] ,
+                aem_frames[frame , 2] ,
+                color = "purple" ,
+                length = 1 ,
+                normalize = False
+            )
+
+        # Update gravity arrows if wanted
+        if plot_gravity:
+
+            for arrow in tidal_arrows:
+                arrow.remove()
+
+            tidal_arrows = []
+
+            for direction in range(0 , 3):
+                arrow = ax.quiver(
+                    X_frames[frame] ,
+                    Y_frames[frame] ,
+                    Z_frames[frame] ,
+                    tidal_frames[frame , direction , 0] ,
+                    tidal_frames[frame , direction , 1] ,
+                    tidal_frames[frame , direction , 2] ,
+                    color = "green" ,
+                    length = 1 ,
+                    normalize = False
+                )
+
+                tidal_arrows.append(arrow)
 
         # Set time_txt
         time_txt.set_text(
@@ -1774,8 +2162,8 @@ if static2D_plots:
 if animation2D:
     Make2DAnimation(data_path=data_path, param_by_affine=param_by_affine, nframes=1000)
 if animation3D:
-    Make3DAnimation(data_path=data_path, param_by_affine=param_by_affine, nframes=1000, plot_sings=visualize_singularities ,
-                    plot_em=visualize_EM)
+    Make3DAnimation(data_path=data_path, param_by_affine=param_by_affine, nframes=1000,
+                    plot_sings=visualize_singularities , plot_em=visualize_EM , plot_gravity=visualize_gravity)
 
 MakeSimWriteOut(data_path=data_path)
 
