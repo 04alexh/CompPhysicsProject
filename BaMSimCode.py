@@ -174,7 +174,7 @@ def calcFaraday(Apot , indices , coords , ginv):
         sp.lambdify(coords , F_1covar1contravar[mu , nu] , "numpy") for nu in range(0 , 4)]
         for mu in range(0 , 4)]
 
-    return F_Function
+    return (F_Function , F_2covar) #Save the 2covar in case we want to viz the EM fields in animation
 
 
 ### Define function for calculation of the Riemann tensor
@@ -606,7 +606,7 @@ def findAccel(sol , change_of_state):
 
 
 ### Define function to integrate the geodesic equations
-def integrateGeodesics(g , F , qmrat , christoffels , indices , cur_pos , cur_vel , sing_data , coordinate_info , runtime , stepsize):
+def integrateGeodesics(g , F , Fviz , qmrat , christoffels , indices , cur_pos , cur_vel , sing_data , coordinate_info , runtime , stepsize):
 
     # Define the initial state vector
     initial_state = [
@@ -727,6 +727,7 @@ def integrateGeodesics(g , F , qmrat , christoffels , indices , cur_pos , cur_ve
         cart_tran = cartesian_transformation ,
         metric = g ,
         apot = Apot ,
+        F = Fviz ,
         particle_info = (particle_mass , particle_charge) ,
         sing_data = sing_data ,
         init = [cur_pos , cur_vel]
@@ -769,11 +770,11 @@ ui = [ut_init , vi[0] , vi[1] , vi[2]]
 
 
 ### Calculate Faraday tensor
-F = calcFaraday(Apot = Apot , indices = indices , coords = coords , ginv = ginv)
+F , Fviz = calcFaraday(Apot = Apot , indices = indices , coords = coords , ginv = ginv)
 
 
 ### Integrate the geodesic equations
-sol = integrateGeodesics(g = g , F = F , qmrat = qmrat , christoffels = Connections ,
+sol = integrateGeodesics(g = g , F = F , Fviz = Fviz , qmrat = qmrat , christoffels = Connections ,
                          indices = indices , cur_pos = ri , cur_vel = ui ,
                          sing_data = singularity_data , coordinate_info = coordinate_info ,
                          runtime = lamTot , stepsize = stepsize)
