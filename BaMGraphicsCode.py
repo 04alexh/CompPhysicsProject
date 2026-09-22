@@ -10,10 +10,10 @@ import sympy as sp
 ##### GRAPHICS INPUTS #####
 
 #INPUT: Please type the filepath to the simulation data you want to visualize.
-data_path = "geodesicOutput_20260922_002622.npz"
+data_path = "geodesicOutput_20260922_033854.npz"
 
 #INPUT: Please select which visualizations you would like.
-static2D_plots = True
+static2D_plots = False
 animation2D = False
 animation3D = False
 
@@ -905,17 +905,6 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
             nframes
         )
 
-        '''frame_indices = np.searchsorted(
-            t ,
-            param_frames
-        )
-
-        frame_indices = np.clip(
-            frame_indices ,
-            0 ,
-            len(t) - 1
-        )'''
-
         # Interpolate trajectory onto timelike coordinate frames
         X_frames = np.interp(
             param_frames ,
@@ -955,17 +944,6 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
             lam[-1] ,
             nframes
         )
-
-        '''frame_indices = np.searchsorted(
-            lam ,
-            param_frames
-        )
-
-        frame_indices = np.clip(
-            frame_indices ,
-            0 ,
-            len(lam) - 1
-        )'''
 
         # Interpolate trajectory onto affine parameter frames
         X_frames = np.interp(
@@ -1440,6 +1418,84 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
             )
             aem_frames[frame] = aem_xyz
 
+            # Get magnitudes of E, B, and aem
+            E_magnitudes = np.linalg.norm(
+                E_frames ,
+                axis = 1
+            )
+            B_magnitudes = np.linalg.norm(
+                B_frames ,
+                axis = 1
+            )
+            aem_magnitudes = np.linalg.norm(
+                aem_frames ,
+                axis = 1
+            )
+
+            # Get positive finite values
+            def get_log_range(vectors):
+                magnitudes = np.linalg.norm(
+                    vectors,
+                    axis = 1
+                )
+
+                positive = magnitudes[
+                    np.isfinite(magnitudes)
+                    & (magnitudes > 0)
+                ]
+
+                if len(positive) == 0:
+                    return 0 , 0
+
+                return (
+                    np.log10(np.min(positive)) ,
+                    np.log10(np.max(positive))
+                )
+
+            E_log_min , E_log_max = get_log_range(E_frames)
+            B_log_min , B_log_max = get_log_range(B_frames)
+            aem_log_min , aem_log_max = get_log_range(aem_frames)
+
+            # Make scaler
+            def log_scale_vector(
+                    vector , log_min , log_max , min_length = .5 , max_length = 7
+            ):
+                magnitude = np.linalg.norm(vector)
+
+                if (magnitude <= 0 or not np.isfinite(magnitude)):
+                    return np.zeros(3)
+
+                # Convert mags to log10
+                log_magnitude = np.log10(
+                    magnitude
+                )
+
+                # Convert log mag to scale from 0 to 1
+                if log_max > log_min:
+
+                    fraction = (
+                        log_magnitude - log_min
+                    ) / (
+                        log_max - log_min
+                    )
+                    fraction = np.clip(
+                        fraction,
+                        0 ,
+                        1
+                    )
+
+                else:
+
+                    fraction = .5
+
+                # Convert to lengths
+                arrow_length = (
+                    min_length
+                    + fraction * (max_length - min_length)
+                )
+                direction = vector / magnitude
+
+                return direction * arrow_length
 
     # Additionally, if desired we can plot the effects of gravity
     # In theory, gravity actually causes no acceleration on the particle
@@ -1516,10 +1572,13 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
             "numpy"
         )
 
-        # Create storage of the 3 tidal acceleration vectors
-        tidal_frames = np.zeros(
-            (nframes , 3 , 3)
-        )
+        # Create storage for the neighbor particles and their deviation arrows
+        neighbor_frames = np.zeros((nframes , 6 , 3))
+        tidal_arrow_frames = np.zeros((nframes , 6 , 3))
+        tidal_strength_frames = np.zeros((nframes , 6 ))
+
+        # Set the proper distance separation of the particles
+        tidal_sep = 1
 
         # Calculate tidal accel at every animation frame
         for frame in range(0 , nframes):
@@ -1621,11 +1680,17 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
                     for nu in range(0, 4):
                         norm_square += g_num[mu, nu] * projected[mu] * projected[nu]
 
-                if norm_square <= 0:
+                if norm_square <= 1e-12:
                     continue  # Skip if timelike
 
                 projected /= np.sqrt(norm_square)
                 spatial_basis.append(projected)
+
+            # If on some frame there are less than 3 basis vectors, fill neighbor info with nans to avoid crash
+            if len(spatial_basis) < 3:
+                neighbor_frames[frame, :, :] = np.nan
+                tidal_arrow_frames[frame, :, :] = np.nan
+                continue
 
             ### Now let's calculate the tidal accel for each local basis direction
             # Construct cartesian jacobian for ez computations
@@ -1637,7 +1702,8 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
             # Iterate through local direction
             for direction in range(0 , min(3 , len(spatial_basis))):
 
-                xi = spatial_basis[direction]
+                basis = spatial_basis[direction]
+                xi = tidal_sep * basis
 
                 # The geodesic deviation equation is
                 # (d^2x^mu/dlambda^2) = "a^mu" = -R^mu_nurhosigma * u^nu * xi^rho * u^sigma
@@ -1662,23 +1728,24 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
                                 )
                     a_tidal[mu] = expr
 
-                # Project tidal acceleration vector onto local spatial basis
+                # Project tidal acceleration vector onto local spatial basis (spatial tetrad parts)
                 local_tidal = np.zeros(3)
-
                 for basis_index in range(0 , min(3 , len(spatial_basis))):
 
-                    basis = spatial_basis[basis_index]
+                    basis2 = spatial_basis[basis_index]
 
                     # a_tidal DOT specific_basis = g_munu * a_tidal^mu * specifc_basis^nu = local_a in specified basis direction
                     expr = 0
                     for mu in range(0 , 4):
                         for nu in range(0, 4):
-                            expr += g_num[mu , nu] * a_tidal[mu] * basis[nu]
+                            expr += g_num[mu , nu] * a_tidal[mu] * basis2[nu]
                     local_tidal[basis_index] = expr
+
+                # Get strength of tidal accel
+                tidal_strength = np.linalg.norm(local_tidal) #ok to use np function since tetrad is locally flat
 
                 # Project local spatial acceleration to the coordinate spatial vector (coords of metric)
                 spatial_vector = np.zeros(3)
-
                 for basis_index in range(0 , min(3 , len(spatial_basis))):
 
                     spatial_vector += (
@@ -1686,17 +1753,52 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
                         * spatial_basis[basis_index][1:4]
                     )
 
-                # Convert coordinate spatial vectors into the cartesian XYZ for animation
-                cart_vector = (
-                    J @ spatial_vector
+
+                ### Convert coordinate spatial vectors into the cartesian XYZ for animation
+                neighborXYZ_offset = (
+                    J @ basis[1:4] * tidal_sep
                 )
+                tidal_xyz = J @ spatial_vector
 
-                tidal_frames[
-                    frame ,
-                    direction ,
-                    :
-                ] = cart_vector
+                # Positive direction particles
+                plus_index = 2 * direction
+                neighbor_frames[frame , plus_index] = (
+                    np.array([
+                        X_frames[frame] ,
+                        Y_frames[frame] ,
+                        Z_frames[frame]
+                    ])
+                    + neighborXYZ_offset
+                )
+                tidal_arrow_frames[frame, plus_index] = tidal_xyz
+                tidal_strength_frames[frame, plus_index] = tidal_strength
 
+                # Negative direction particles
+                minus_index = 2 * direction + 1
+                neighbor_frames[frame, minus_index] = (
+                    np.array([
+                        X_frames[frame] ,
+                        Y_frames[frame] ,
+                        Z_frames[frame]
+                    ])
+                    - neighborXYZ_offset
+                )
+                # Since geodesic deviation linear in xi then (-xi) reverses tidal accel
+                tidal_arrow_frames[frame, minus_index] = -tidal_xyz
+                tidal_strength_frames[frame, minus_index] = tidal_strength
+
+        # Get range of magnitudes so arrow lengths can be log scale for easier viz
+        positive_tidal = tidal_strength_frames[
+            np.isfinite(tidal_strength_frames)
+        ]
+        positive_tidal = positive_tidal[positive_tidal > 0]
+
+        log_min = np.log10(
+            np.min(positive_tidal)
+        )
+        log_max = np.log10(
+            np.max(positive_tidal)
+        )
 
 
     # Scale axes equally
@@ -1762,7 +1864,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
         [] ,
         color = col ,
         marker = "o" ,
-        markersize = 4 ,
+        markersize = 8 ,
         linestyle = ""
     )
 
@@ -1772,13 +1874,29 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
     aem_arrow = None
     if plot_em:
 
+        E_vec_plot = log_scale_vector(
+            E_frames[0] ,
+            E_log_min ,
+            E_log_max ,
+        )
+        B_vec_plot = log_scale_vector(
+            B_frames[0] ,
+            B_log_min ,
+            B_log_max
+        )
+        aem_vec_plot = log_scale_vector(
+            aem_frames[0] ,
+            aem_log_min ,
+            aem_log_max
+        )
+
         E_arrow = ax.quiver(
             X_frames[0] ,
             Y_frames[0] ,
             Z_frames[0] ,
-            E_frames[0 , 0] ,
-            E_frames[0 , 1] ,
-            E_frames[0 , 2] ,
+            E_vec_plot[0] ,
+            E_vec_plot[1] ,
+            E_vec_plot[2] ,
             color = "blue" ,
             length = 1 ,
             normalize = False
@@ -1788,9 +1906,9 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
             X_frames[0] ,
             Y_frames[0] ,
             Z_frames[0] ,
-            B_frames[0 , 0] ,
-            B_frames[0 , 1] ,
-            B_frames[0 , 2] ,
+            B_vec_plot[0] ,
+            B_vec_plot[1] ,
+            B_vec_plot[2] ,
             color = "red" ,
             length = 1 ,
             normalize = False
@@ -1800,9 +1918,9 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
             X_frames[0] ,
             Y_frames[0] ,
             Z_frames[0] ,
-            aem_frames[0 , 0] ,
-            aem_frames[0 , 1] ,
-            aem_frames[0 , 2] ,
+            aem_vec_plot[0] ,
+            aem_vec_plot[1] ,
+            aem_vec_plot[2] ,
             color = "purple" ,
             length = 1 ,
             normalize = False
@@ -1810,17 +1928,63 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
 
     # If desiring the graviational tidal effects visualized, draw the initial vector arrows on the particle
     tidal_arrows = []
+    neighbor_particles = []
     if plot_gravity:
 
-        for direction in range(0 , 3):
+        for direction in range(0 , 6):
+            nparticle = ax.plot(
+                [neighbor_frames[0 , direction , 0]] ,
+                [neighbor_frames[0 , direction , 1]] ,
+                [neighbor_frames[0 , direction , 2]] ,
+                marker = "o" ,
+                markersize = 3 ,
+                color = "darkolivegreen"
+            )[0]
+            neighbor_particles.append(nparticle)
+
+        for direction in range(0 , 6):
+
+            # Manually limit arrow length
+            arrow_vec = tidal_arrow_frames[0 , direction]
+            arrow_mag = np.linalg.norm(arrow_vec)
+
+            if arrow_mag > 0 and np.isfinite(arrow_mag):
+
+                min_length = .5
+                max_length = 7
+
+                logmag = np.log10(arrow_mag)
+
+                fraction = (
+                    logmag - log_min
+                ) / (
+                    log_max - log_min
+                )
+
+                fraction = np.clip(
+                    fraction ,
+                    0 ,
+                    1
+                )
+
+                arrow_length = (
+                    min_length
+                    + fraction * (max_length - min_length)
+                )
+
+                arrow_direction = arrow_vec / arrow_mag
+                arrow_vec_plot = arrow_direction * arrow_length
+
+            else:
+                arrow_vec_plot = np.zeros(3)
 
             arrow = ax.quiver(
-                X_frames[0] ,
-                Y_frames[0] ,
-                Z_frames[0] ,
-                tidal_frames[0 , direction , 0] ,
-                tidal_frames[0 , direction , 1] ,
-                tidal_frames[0 , direction , 2] ,
+                neighbor_frames[0 , direction , 0] ,
+                neighbor_frames[0 , direction , 1] ,
+                neighbor_frames[0 , direction , 2] ,
+                arrow_vec_plot[0] ,
+                arrow_vec_plot[1] ,
+                arrow_vec_plot[2] ,
                 color = "green" ,
                 length = 1 ,
                 normalize = False
@@ -1884,7 +2048,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
     ### Define the animation update function
     def update(frame):
 
-        nonlocal E_arrow , B_arrow , aem_arrow , tidal_arrows
+        nonlocal E_arrow , B_arrow , aem_arrow , tidal_arrows , neighbor_particles
         frame = int(frame)
 
         # Set trail
@@ -1912,13 +2076,29 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
             B_arrow.remove()
             aem_arrow.remove()
 
+            E_vec_plot = log_scale_vector(
+                E_frames[frame] ,
+                E_log_min ,
+                E_log_max
+            )
+            B_vec_plot = log_scale_vector(
+                B_frames[frame] ,
+                B_log_min ,
+                B_log_max
+            )
+            aem_vec_plot = log_scale_vector(
+                aem_frames[frame] ,
+                aem_log_min ,
+                aem_log_max
+            )
+
             E_arrow = ax.quiver(
                 X_frames[frame] ,
                 Y_frames[frame] ,
                 Z_frames[frame] ,
-                E_frames[frame , 0] ,
-                E_frames[frame , 1] ,
-                E_frames[frame , 2] ,
+                E_vec_plot[0] ,
+                E_vec_plot[1] ,
+                E_vec_plot[2] ,
                 color = "blue" ,
                 length = 1 ,
                 normalize = False
@@ -1927,9 +2107,9 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
                 X_frames[frame] ,
                 Y_frames[frame] ,
                 Z_frames[frame] ,
-                B_frames[frame , 0] ,
-                B_frames[frame , 1] ,
-                B_frames[frame , 2] ,
+                B_vec_plot[0] ,
+                B_vec_plot[1] ,
+                B_vec_plot[2] ,
                 color = "red" ,
                 length = 1 ,
                 normalize = False
@@ -1938,35 +2118,78 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
                 X_frames[frame] ,
                 Y_frames[frame] ,
                 Z_frames[frame] ,
-                aem_frames[frame , 0] ,
-                aem_frames[frame , 1] ,
-                aem_frames[frame , 2] ,
+                aem_vec_plot[0] ,
+                aem_vec_plot[1] ,
+                aem_vec_plot[2] ,
                 color = "purple" ,
                 length = 1 ,
                 normalize = False
             )
 
-        # Update gravity arrows if wanted
+        # Update gravity arrows and particles if wanted
         if plot_gravity:
+
+            for direction in range(0 , 6):
+                neighbor_particles[direction].set_data(
+                    [neighbor_frames[frame , direction , 0]] ,
+                    [neighbor_frames[frame , direction , 1]]
+                )
+                neighbor_particles[direction].set_3d_properties(
+                    [neighbor_frames[frame , direction , 2]]
+                )
 
             for arrow in tidal_arrows:
                 arrow.remove()
 
             tidal_arrows = []
 
-            for direction in range(0 , 3):
+            for direction in range(0 , 6):
+
+                # Manually limit arrow length so they are visible but change in length due to grav strength
+                arrow_vec = tidal_arrow_frames[frame , direction]
+                arrow_mag = np.linalg.norm(arrow_vec)
+
+                if arrow_mag > 0 and np.isfinite(arrow_mag):
+                    min_length = .5
+                    max_length = 7
+
+                    logmag = np.log10(arrow_mag)
+
+                    fraction = (
+                        logmag - log_min
+                    ) / (
+                        log_max - log_min
+                    )
+
+                    fraction = np.clip(
+                        fraction ,
+                        0 ,
+                        1
+                    )
+
+                    arrow_length = (
+                        min_length
+                        + fraction * (max_length - min_length)
+                    )
+
+                    arrow_direction = arrow_vec / arrow_mag
+                    arrow_vec_plot = arrow_direction * arrow_length
+
+                else:
+
+                    arrow_vec_plot = np.zeros(3)
+
                 arrow = ax.quiver(
-                    X_frames[frame] ,
-                    Y_frames[frame] ,
-                    Z_frames[frame] ,
-                    tidal_frames[frame , direction , 0] ,
-                    tidal_frames[frame , direction , 1] ,
-                    tidal_frames[frame , direction , 2] ,
+                    neighbor_frames[frame , direction , 0] ,
+                    neighbor_frames[frame , direction , 1] ,
+                    neighbor_frames[frame , direction , 2] ,
+                    arrow_vec_plot[0] ,
+                    arrow_vec_plot[1] ,
+                    arrow_vec_plot[2] ,
                     color = "green" ,
                     length = 1 ,
                     normalize = False
                 )
-
                 tidal_arrows.append(arrow)
 
         # Set time_txt
