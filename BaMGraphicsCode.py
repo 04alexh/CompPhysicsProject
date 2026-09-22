@@ -12,7 +12,7 @@ import sympy as sp
 ##### GRAPHICS INPUTS #####
 
 #INPUT: Please type the filepath to the simulation data you want to visualize.
-data_path = "geodesicOutput_20260921_001941.npz"
+data_path = "geodesicOutput_20260921_230429.npz"
 
 #INPUT: Please select which visualizations you would like.
 static2D_plots = False
@@ -24,6 +24,9 @@ param_by_affine = False
 
 #INPUT: If doing 3D animation, indicate if you want singularities visualized.
 visualize_singularities = True
+
+#INPUT: If doing 3D animation, indicate if you want EM fields visualized.
+visualize_EM = True
 
 ##### END OF GRAPHICS INPUTS #####
 
@@ -832,7 +835,7 @@ def plotSingGeo(
 
 
 ### Define function to make 3D animation of the trajectory
-def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_sings = False):
+def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_sings = False , plot_em = False):
 
     # Unpack the data
     data = np.load(data_path , allow_pickle = True)
@@ -845,6 +848,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_
     vel = np.asarray(data["vel"] , dtype = float)
     locvel = np.asarray(data["locvel"] , dtype = float)
     ranges = data["coordinate_info"].item()["ranges"]
+    particle_info = data["particle_info"]
 
     # Ensure cartesian transform is meaningful
     assert len(cartesian_transform) == 3 , "Error: Cartesian transformation not formatted properly."
@@ -1076,6 +1080,304 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_
                 ranges=ranges
             )
 
+    # Additionally, if desired we can plot the E and B fields that the particle measures
+    # This calculates the E and B for each frame
+    if plot_em:
+
+        # Store E and B vectors for each frame
+        E_frames = np.zeros(
+            (nframes , 3)
+        )
+        B_frames = np.zeros(
+            (nframes , 3)
+        )
+
+        # Create transform Jacobian to make E and B transforms easier
+        cart_expr = sp.Matrix([
+            x_expr ,
+            y_expr ,
+            z_expr
+        ])
+        cart_jac_expr = cart_expr.jacobian(
+            sp.Matrix(coords[1:4])
+        )
+        cart_jac_func = sp.lambdify(
+            coords ,
+            cart_jac_expr ,
+            "numpy"
+        )
+
+        # Unpack metric and Faraday tensor
+        metric_expr = sp.Matrix(
+            [
+                list(row) for row in data["metric"]
+            ]
+        )
+        F_expr = sp.Matrix(
+            [
+                list(row) for row in data["F"]
+            ]
+        )
+
+        # Because I added this part after, the sim variable names are prolly a little confusing
+        # When I made the calcFaraday function, I needed the (1,1)-tensor version for the lorentz force component of GE.
+        # But then when I needed to do this viz, I have the sim now also save a sympy version of F
+        # But this saved F is not the (1,1)-tensor but the (0,2)-tensor version
+        # So although calcF is returning F as a numpy function (1,1)-tensor
+        # The F that is saved is a sympy (0,2)-Tensor :)
+        metric_func = sp.lambdify(
+            coords ,
+            metric_expr ,
+            "numpy"
+        )
+        F_func = sp.lambdify(
+            coords ,
+            F_expr ,
+            "numpy"
+        )
+
+        # Now we shall fill the E and B frames
+        for frame in range(nframes):
+
+            if param_by_affine == False:
+
+                # Create position vector so we can calculate E and B easier
+                position = np.array(
+                    [
+                        np.interp(
+                            param_frames[frame] ,
+                            t ,
+                            y[i]
+                        )
+                        for i in range(0 , 4)
+                    ] ,
+                    dtype = float
+                )
+
+                # Interpolate 4-velo
+                u = np.array(
+                    [
+                        np.interp(
+                            param_frames[frame] ,
+                            t ,
+                            y[4 + i]
+                        )
+                        for i in range(0 , 4)
+                    ] ,
+                    dtype = float
+                )
+
+            else:
+
+                # Same process for but other parameterization technique
+                position = np.array(
+                    [
+                        np.interp(
+                            param_frames[frame] ,
+                            lam ,
+                            y[i]
+                        )
+                        for i in range(0 , 4)
+                    ] ,
+                    dtype = float
+                )
+
+                u = np.array(
+                    [
+                        np.interp(
+                            param_frames[frame] ,
+                            lam ,
+                            y[4 + i]
+                        )
+                        for i in range(0 , 4)
+                    ] ,
+                    dtype = float
+                )
+
+            # Evaluate the metric and Faraday tensor at given position
+            g_num = np.asarray(
+                metric_func(*position) ,
+                dtype = float
+            )
+            F_num = np.asarray(
+                F_func(*position) ,
+                dtype = float
+            )
+
+            ### The locally measured electric field is given as
+            # E_mu = F_munu * u^nu
+            Ecovar = np.zeros(4)
+            for mu in range(0 , 4):
+                expr = 0
+                for nu in range(0 , 4):
+                    expr += F_num[mu , nu] * u[nu]
+                Ecovar[mu] = expr
+
+            # Normal "vectors" are written with contravariant components so we must raise index
+            # E_nu * g^munu = E^mu
+            ginv = np.linalg.inv(
+                g_num
+            )
+
+            Econtravar = np.zeros(4)
+            for mu in range(0 , 4):
+                expr = 0
+                for nu in range(0 , 4):
+                    expr += Ecovar[nu] * ginv[mu , nu]
+                Econtravar[mu] = expr
+
+
+            ### The locally measured magnetic field is given as
+            # B_mu = .5 * LVT_munurhosigma * u^nu * F^rhosigma where LVC is Levi-Civita tensor (LVT * Faraday = Dual Faraday)
+            # First lets get a raised contravariant F:
+            # F_rhosigma * g^murho * g^nusigma = F^munu
+            F_contravar = np.zeros((4 , 4))
+            for mu in range(0 , 4):
+                for nu in range(0 , 4):
+                    expr = 0
+                    for rho in range(0 , 4):
+                        for sigma in range(0 , 4):
+                            expr += F_num[rho , sigma] * ginv[mu , rho] * ginv[nu , sigma]
+                    F_contravar[mu , nu] = expr
+
+            # Need determinant of g for LVT
+            detg = np.linalg.det(
+                g_num
+            )
+            sqrt_minus_g = np.sqrt(abs(detg))
+
+            # Define Levi Civita symbol logic for LVT
+            def levi_civita(i , j , k ,l):
+
+                indices = [i , j , k , l]
+
+                # If an index is the same as another, the LCS equals 0
+                if len(set(indices)) < 4:
+                    return 0
+
+                # LVC returns 1 if you have an even number or inversions and returns -1 if you have an odd number of inversions
+                inversions = 0
+                for a in range(0 , 4):
+                    for b in range(a + 1 , 4):
+                        if indices[a] > indices[b]:
+                            inversions += 1
+
+                return (-1)**inversions
+
+            # Now we are ready to calculate B_mu
+            B_covar = np.zeros(4)
+            for mu in range(0 , 4):
+                expr = 0
+                for nu in range(0 , 4):
+                    for rho in range(0 , 4):
+                        for sigma in range(0 , 4):
+
+                            LVT = (
+                                sqrt_minus_g * levi_civita(mu , nu , rho , sigma)
+                            )
+                            expr += (
+                                .5
+                                * LVT
+                                * u[nu]
+                                * F_contravar[rho , sigma]
+                            )
+                B_covar[mu] = expr
+
+            # Again we want our field vectors with contravariant components
+            # B_nu * g^munu = B^mu
+            B_contravar = np.zeros(4)
+            for mu in range(0 , 4):
+                expr = 0
+                for nu in range(0 , 4):
+                    expr += B_covar[nu] * ginv[mu , nu]
+                B_contravar[mu] = expr
+
+
+            ### Now we construct the spatial basis for the particle's rest frame
+            spatial_basis = []
+
+            for spatial_index in range(1 , 4):
+
+                basis = np.zeros(4)
+                basis[spatial_index] = 1
+
+                # Project coordinate basis vector perp to the particle's 4-velo
+                # This is because the particle's 4-velo acts as its "time direction"
+                # For an orthogonal coord system all spatial vectors should be perp to this direction
+                # Inner product of basis and u: g_munu * basis^mu * u^nu
+                inner = 0
+                for mu in range(0 , 4):
+                    for nu in range(0 , 4):
+                        inner += g_num[mu , nu] * basis[mu] * u[nu]
+                projected = (
+                    basis + inner * u
+                )
+
+                # Gram-Schmidt using previous basis to make orthogonal basis
+                for previous in spatial_basis:
+
+                    projection = 0
+                    for mu in range(0 , 4):
+                        for nu in range(0 , 4):
+                            projection += g_num[mu , nu] * previous[mu] * projected[nu]
+
+                    projected -= (
+                        projection * previous
+                    )
+
+                # Normalize basis so its fully orthonormal
+                norm_square = 0
+                for mu in range(0 , 4):
+                    for nu in range(0 , 4):
+                        norm_square += g_num[mu , nu] * projected[mu] * projected[nu]
+
+                if norm_square <= 0:
+                    continue #Skip if timelike
+
+                projected /= np.sqrt(norm_square)
+                spatial_basis.append(projected)
+
+            ### Obtain E and B in local frame
+            local_E = np.zeros(3)
+            local_B = np.zeros(3)
+
+            for i in range(0 , min(3 , len(spatial_basis))):
+
+                basis = spatial_basis[i]
+
+                # Get projections of Ecovar and Bcovar on the specified spatial basis vector
+                # Here I will just use matrix mult cuz it makes more sense in my brain for this specific purpose
+                local_E[i] = (
+                    Ecovar @ basis
+                )
+                local_B[i] = (
+                    B_covar @ basis
+                )
+
+            # Convert local spatial basis into the XYZ of the animation
+            J = np.asarray(
+                cart_jac_func(*position) ,
+                dtype = float
+            )
+
+            E_xyz = np.zeros(3)
+            B_xyz = np.zeros(3)
+
+            for i in range(0 , min(3 , len(spatial_basis))):
+
+                # Same projection process but now converting to the XYZ
+                spatial_vector = spatial_basis[i][1:4]
+
+                cart_vector = (
+                    J @ spatial_vector
+                )
+
+                E_xyz += local_E[i] * cart_vector
+                B_xyz += local_B[i] * cart_vector
+
+            E_frames[frame] = E_xyz
+            B_frames[frame] = B_xyz
+
     # Scale axes equally
     xmin , xmax = np.nanmin(X) , np.nanmax(X)
     ymin , ymax = np.nanmin(Y) , np.nanmax(Y)
@@ -1118,20 +1420,59 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_
         [] ,
         [] ,
         [] ,
-        color = "blue" ,
-        lw = 1.5
+        color = "black" ,
+        lw = 1 ,
+        ls = "-"
     )
 
     # Add particle object also
+    if particle_info[0] == 0:
+        col = "yellow"
+    elif particle_info[1] == 0:
+        col = "black"
+    elif particle_info[1] > 0:
+        col = "gray"
+    elif particle_info[1] < 0:
+        col = "brown"
+
     particle , = ax.plot(
         [] ,
         [] ,
         [] ,
-        color = "red" ,
+        color = col ,
         marker = "o" ,
-        markersize = 8 ,
+        markersize = 4 ,
         linestyle = ""
     )
+
+    # If desiring the E and B visualized, this will draw initial vector arrows on the particle
+    E_arrow = None
+    B_arrow = None
+    if plot_em:
+
+        E_arrow = ax.quiver(
+            X_frames[0] ,
+            Y_frames[0] ,
+            Z_frames[0] ,
+            E_frames[0 , 0] ,
+            E_frames[0 , 1] ,
+            E_frames[0 , 2] ,
+            color = "blue" ,
+            length = 1 ,
+            normalize = False
+        )
+
+        B_arrow = ax.quiver(
+            X_frames[0] ,
+            Y_frames[0] ,
+            Z_frames[0] ,
+            B_frames[0 , 0] ,
+            B_frames[0 , 1] ,
+            B_frames[0 , 2] ,
+            color = "red" ,
+            length = 1 ,
+            normalize = False
+        )
 
     # Initialize counters for lambda/timelike coord and XYZ positions and 3-speed and legend
     time_txt = fig.text(
@@ -1152,14 +1493,14 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_
         fontsize = 12
     )
 
-    sing_txt = fig.text(
-        .05 ,
-        .5 ,
-        "Legend: \nParticle: Red \nDeterminant Singularity: Orange \nCoordinate Singularity: Purple \nCurvature Singularity: Green" ,
-        ha = "left" ,
-        va = "center" ,
-        fontsize = 14
-    )
+    # sing_txt = fig.text(
+    #     .05 ,
+    #     .5 ,
+    #     "Legend: \nParticle: Red \nDeterminant Singularity: Orange \nCoordinate Singularity: Purple \nCurvature Singularity: Green" ,
+    #     ha = "left" ,
+    #     va = "center" ,
+    #     fontsize = 14
+    # ) # This text is ugly maybe some way to make it better lol
 
     # Add a slider to move across frame parameter
     slider_ax = fig.add_axes(
@@ -1190,6 +1531,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_
     ### Define the animation update function
     def update(frame):
 
+        nonlocal E_arrow , B_arrow
         frame = int(frame)
 
         # Set trail
@@ -1209,6 +1551,35 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 , plot_
         particle.set_3d_properties(
             [Z_frames[frame]]
         )
+
+        # Update EM arrows if wanted
+        if plot_em:
+
+            E_arrow.remove()
+            B_arrow.remove()
+
+            E_arrow = ax.quiver(
+                X_frames[frame] ,
+                Y_frames[frame] ,
+                Z_frames[frame] ,
+                E_frames[frame , 0] ,
+                E_frames[frame , 1] ,
+                E_frames[frame , 2] ,
+                color = "blue" ,
+                length = 1 ,
+                normalize = False
+            )
+            B_arrow = ax.quiver(
+                X_frames[frame] ,
+                Y_frames[frame] ,
+                Z_frames[frame] ,
+                B_frames[frame , 0] ,
+                B_frames[frame , 1] ,
+                B_frames[frame , 2] ,
+                color = "red" ,
+                length = 1 ,
+                normalize = False
+            )
 
         # Set time_txt
         time_txt.set_text(
@@ -1403,7 +1774,8 @@ if static2D_plots:
 if animation2D:
     Make2DAnimation(data_path=data_path, param_by_affine=param_by_affine, nframes=1000)
 if animation3D:
-    Make3DAnimation(data_path=data_path, param_by_affine=param_by_affine, nframes=1000, plot_sings=visualize_singularities)
+    Make3DAnimation(data_path=data_path, param_by_affine=param_by_affine, nframes=1000, plot_sings=visualize_singularities ,
+                    plot_em=visualize_EM)
 
 MakeSimWriteOut(data_path=data_path)
 
