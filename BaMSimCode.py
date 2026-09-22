@@ -606,7 +606,7 @@ def findAccel(sol , change_of_state):
 
 
 ### Define function to integrate the geodesic equations
-def integrateGeodesics(g , F , Fviz , qmrat , christoffels , indices , cur_pos , cur_vel , sing_data , coordinate_info , runtime , stepsize):
+def integrateGeodesics(g , F , Fviz , qmrat , christoffels , christoffelsviz , indices , cur_pos , cur_vel , sing_data , coordinate_info , runtime , stepsize):
 
     # Define the initial state vector
     initial_state = [
@@ -720,6 +720,7 @@ def integrateGeodesics(g , F , Fviz , qmrat , christoffels , indices , cur_pos ,
         t = sol.t ,
         y = sol.y ,
         a = accelerations ,
+        christos = christoffelsviz ,
         vel = spatvel ,
         locvel = locvel ,
         coords = [str(c) for c in coords] ,
@@ -774,7 +775,8 @@ F , Fviz = calcFaraday(Apot = Apot , indices = indices , coords = coords , ginv 
 
 
 ### Integrate the geodesic equations
-sol = integrateGeodesics(g = g , F = F , Fviz = Fviz , qmrat = qmrat , christoffels = Connections ,
+sol = integrateGeodesics(g = g , F = F , Fviz = Fviz , qmrat = qmrat ,
+                         christoffels = Connections , christoffelsviz = ConnectionsSym ,
                          indices = indices , cur_pos = ri , cur_vel = ui ,
                          sing_data = singularity_data , coordinate_info = coordinate_info ,
                          runtime = lamTot , stepsize = stepsize)
