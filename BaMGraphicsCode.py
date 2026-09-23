@@ -15,13 +15,13 @@ data_path = "geodesicOutput_20260923_022647.npz"
 #INPUT: Please select which visualizations you would like.
 static2D_plots = False
 animation2D = False
-animation3D = True
+animation3D = False
 
 #INPUT: Please indicate if you want parameterization by affine parameter or timelike coordinate.
 param_by_affine = False
 
 #INPUT: If doing 3D animation, indicate if you want singularities visualized.
-visualize_singularities = True
+visualize_singularities = False
 
 #INPUT: If doing 3D animation, indicate if you want EM fields visualized.
 visualize_EM = False
@@ -2517,6 +2517,15 @@ def MakeSimWriteOut(data_path):
         .99 ,
         .1 ,
         f"Singularity Information: \n {data["sing_data"].item()}" ,
+        ha = "right" ,
+        va = "top" ,
+        fontsize = 10
+    )
+
+    cloudtxt = fig.text(
+        .99 ,
+        .15 ,
+        f"Has integrated perturbed paths: \n {data["cloudinfo"] is not None}" ,
         ha = "right" ,
         va = "top" ,
         fontsize = 10
