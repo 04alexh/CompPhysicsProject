@@ -10,24 +10,27 @@ import sympy as sp
 ##### GRAPHICS INPUTS #####
 
 #INPUT: Please type the filepath to the simulation data you want to visualize.
-data_path = "geodesicOutput_20260922_033854.npz"
+data_path = "geodesicOutput_20260923_022647.npz"
 
 #INPUT: Please select which visualizations you would like.
 static2D_plots = False
 animation2D = False
-animation3D = False
+animation3D = True
 
 #INPUT: Please indicate if you want parameterization by affine parameter or timelike coordinate.
 param_by_affine = False
 
 #INPUT: If doing 3D animation, indicate if you want singularities visualized.
-visualize_singularities = False
+visualize_singularities = True
 
 #INPUT: If doing 3D animation, indicate if you want EM fields visualized.
 visualize_EM = False
 
 #INPUT: If doing 3D animation, indicate if you want the effects of gravity visualized.
 visualize_gravity = False
+
+#INPUT: If doing 3D animation, indicate if you want a cloud of particles visualized (only works if cloud generated when npz created).
+visualize_cloud = False
 
 ##### END OF GRAPHICS INPUTS #####
 
@@ -837,7 +840,7 @@ def plotSingGeo(
 
 ### Define function to make 3D animation of the trajectory
 def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
-                    plot_sings = False , plot_em = False , plot_gravity = False):
+                    plot_sings = False , plot_em = False , plot_gravity = False , plot_deviation = False):
 
     # Unpack the data
     data = np.load(data_path , allow_pickle = True)
@@ -851,6 +854,12 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
     locvel = np.asarray(data["locvel"] , dtype = float)
     ranges = data["coordinate_info"].item()["ranges"]
     particle_info = data["particle_info"]
+
+    cloudinfo = data["cloudinfo"]
+    if cloudinfo.shape == ():
+        cloudinfo = cloudinfo.item()
+    if cloudinfo is not None:
+        cloudinfo = np.asarray(cloudinfo , dtype = float) #Load particle cloud if exists
 
     # Ensure cartesian transform is meaningful
     assert len(cartesian_transform) == 3 , "Error: Cartesian transformation not formatted properly."
@@ -984,6 +993,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
     ax = fig.add_subplot(111 , projection = "3d")
 
     # If desired, plot the singularity geometries
+    # If desired, plot the singularity geometries
     if plot_sings:
 
         sing_data = data["sing_data"].item()
@@ -991,37 +1001,40 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
 
         # Determinant singularities
         determinant_singularities = set()
-        for coord_name, values in sing_data["det_singularities"].items():
-            for value in values:
-                determinant_singularities.add(
-                    (
-                        str(coord_name),
-                        str(value)
-                    )
-                )
-
-        # Coordinate singularities
-        metric_singularities = set()
-        for component, singularities in sing_data["metric_singularities"].items():
-            for coord_name, values in singularities.items():
+        if sing_data["det_singularities"] != { str(coord) : None for coord in coords }:
+            for coord_name, values in sing_data["det_singularities"].items():
                 for value in values:
-                    metric_singularities.add(
+                    determinant_singularities.add(
                         (
                             str(coord_name),
-                            value
+                            str(value)
                         )
                     )
 
+        # Coordinate singularities
+        metric_singularities = set()
+        if sing_data["metric_singularities"] != { str(coord) : None for coord in coords }:
+            for component, singularities in sing_data["metric_singularities"].items():
+                for coord_name, values in singularities.items():
+                    for value in values:
+                        metric_singularities.add(
+                            (
+                                str(coord_name),
+                                value
+                            )
+                        )
+
         # Curvature singularities
         K_singularities = set()
-        for coord_name, values in sing_data["K_singularities"].items():
-            for value in values:
-                K_singularities.add(
-                    (
-                        str(coord_name),
-                        str(value)
+        if sing_data["K_singularities"] != { str(coord) : None for coord in coords }:
+            for coord_name, values in sing_data["K_singularities"].items():
+                for value in values:
+                    K_singularities.add(
+                        (
+                            str(coord_name),
+                            str(value)
+                        )
                     )
-                )
 
         print("Plot det")
         for coord_name, value in determinant_singularities:
@@ -1800,6 +1813,91 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
             np.max(positive_tidal)
         )
 
+    # Additionally, if a particle cloud was simulated we can show the effects of gravity by a particle cloud
+    cloud_X = None
+    cloud_Y = None
+    cloud_Z = None
+    cloud_X_frames = None
+    cloud_Y_frames = None
+    cloud_Z_frames = None
+    if plot_deviation:
+
+        if cloudinfo is None:
+            raise ValueError(
+                "Error: plot_deviation is true, but this .npz did not run cloud!"
+            )
+
+        cloud_X = np.zeros(
+            (cloudinfo.shape[0] , cloudinfo.shape[2]),
+        )
+        cloud_Y = np.zeros(
+            (cloudinfo.shape[0] , cloudinfo.shape[2]),
+        )
+        cloud_Z = np.zeros(
+            (cloudinfo.shape[0] , cloudinfo.shape[2]),
+        )
+
+        # Fill particle cloud positions
+        for particle_index in range(cloudinfo.shape[0]):
+
+            cloud_X[particle_index] = np.asarray(
+                x_func(*cloudinfo[particle_index , 0:4]),
+                dtype=float
+            )
+            cloud_Y[particle_index] = np.asarray(
+                y_func(*cloudinfo[particle_index , 0:4]),
+                dtype=float
+            )
+            cloud_Z[particle_index] = np.asarray(
+                z_func(*cloudinfo[particle_index , 0:4]),
+                dtype=float
+            )
+
+        # Now we need to interpolate onto the correction frames
+        ncloud = cloudinfo.shape[0]
+
+        cloud_X_frames = np.zeros((ncloud , nframes))
+        cloud_Y_frames = np.zeros((ncloud , nframes))
+        cloud_Z_frames = np.zeros((ncloud , nframes))
+
+        for particle_index in range(ncloud):
+
+            if param_by_affine == False:
+
+                cloud_X_frames[particle_index] = np.interp(
+                    param_frames ,
+                    t ,
+                    cloud_X[particle_index]
+                )
+                cloud_Y_frames[particle_index] = np.interp(
+                    param_frames ,
+                    t ,
+                    cloud_Y[particle_index]
+                )
+                cloud_Z_frames[particle_index] = np.interp(
+                    param_frames ,
+                    t ,
+                    cloud_Z[particle_index]
+                )
+
+            else:
+
+                cloud_X_frames[particle_index] = np.interp(
+                    param_frames ,
+                    lam ,
+                    cloud_X[particle_index]
+                )
+                cloud_Y_frames[particle_index] = np.interp(
+                    param_frames ,
+                    lam ,
+                    cloud_Y[particle_index]
+                )
+                cloud_Z_frames[particle_index] = np.interp(
+                    param_frames ,
+                    lam ,
+                    cloud_Z[particle_index]
+                )
+
 
     # Scale axes equally
     xmin , xmax = np.nanmin(X) , np.nanmax(X)
@@ -1991,6 +2089,33 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
             )
             tidal_arrows.append(arrow)
 
+    # If desiring the particle cloud, draw the initial particles and trails
+    deviation_particles = []
+    deviation_trails = []
+    if plot_deviation:
+
+        for particle_index in range(0 , cloudinfo.shape[0]):
+
+            deviation_particle = ax.plot(
+                [cloud_X_frames[particle_index , 0]] ,
+                [cloud_Y_frames[particle_index , 0]] ,
+                [cloud_Z_frames[particle_index , 0]] ,
+                marker = "o" ,
+                markersize = 3 ,
+                color = "darkolivegreen" ,
+                linestyle = ""
+            )[0]
+            deviation_trail = ax.plot(
+                [] ,
+                [] ,
+                [] ,
+                color = "green" ,
+                lw = .7 ,
+            )[0]
+
+            deviation_particles.append(deviation_particle)
+            deviation_trails.append(deviation_trail)
+
     # Initialize counters for lambda/timelike coord and XYZ positions and 3-speed and legend
     time_txt = fig.text(
         .5 ,
@@ -2048,7 +2173,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
     ### Define the animation update function
     def update(frame):
 
-        nonlocal E_arrow , B_arrow , aem_arrow , tidal_arrows , neighbor_particles
+        nonlocal E_arrow , B_arrow , aem_arrow , tidal_arrows , neighbor_particles , deviation_particles , deviation_trails
         frame = int(frame)
 
         # Set trail
@@ -2191,6 +2316,29 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
                     normalize = False
                 )
                 tidal_arrows.append(arrow)
+
+        # Update cloud particles and trails if wanted
+        if plot_deviation:
+
+            for particle_index in range(0 , len(deviation_particles)):
+
+                deviation_particles[particle_index].set_data(
+                    [cloud_X_frames[particle_index , frame]] ,
+                    [cloud_Y_frames[particle_index , frame]]
+                )
+                deviation_particles[particle_index].set_3d_properties(
+                    [cloud_Z_frames[particle_index , frame]]
+                )
+
+            for particle_index in range(0 , len(deviation_trails)):
+
+                deviation_trails[particle_index].set_data(
+                    cloud_X_frames[particle_index , :frame + 1] ,
+                    cloud_Y_frames[particle_index , :frame + 1]
+                )
+                deviation_trails[particle_index].set_3d_properties(
+                    cloud_Z_frames[particle_index , :frame + 1]
+                )
 
         # Set time_txt
         time_txt.set_text(
@@ -2386,7 +2534,7 @@ if animation2D:
     Make2DAnimation(data_path=data_path, param_by_affine=param_by_affine, nframes=1000)
 if animation3D:
     Make3DAnimation(data_path=data_path, param_by_affine=param_by_affine, nframes=1000,
-                    plot_sings=visualize_singularities , plot_em=visualize_EM , plot_gravity=visualize_gravity)
+                    plot_sings=visualize_singularities , plot_em=visualize_EM , plot_gravity=visualize_gravity , plot_deviation=visualize_cloud)
 
 MakeSimWriteOut(data_path=data_path)
 
