@@ -21,13 +21,15 @@ is_angular = [
     1                                           # SPACELIKE COORD 3
 ]
 
-#INPUT: Please set the plotting ranges of the coordinates (only important for visualizing singularities).
+#INPUT: Please set the plotting ranges of the coordinates (only important for visualizing singularities) and types of singularities to plot.
 coordinate_ranges = [
     (0 , 1000) ,                                # TIMELIKE  COORD
     (0 , 20) ,                                  # SPACELIKE COORD 1
     (0 , np.pi) ,                               # SPACELIKE COORD 2
     (0 , 2 * np.pi)                             # SPACELIKE COORD 3
 ]
+calculate_CoordSingularities = True
+calculate_CurveSingularities = True
 
 #INPUT: Please define the transformation of your spatial coordinates to orthonormal cartesian coordinates.
 cartesian_transformation = [
@@ -77,6 +79,9 @@ vi = [
 #INPUT: Please input the amount of "integration time" and the step size.
 lamTot = 100
 stepsize = .1
+
+#INPUT: Please input if you want a cloud of particles to also be integrated.
+make_cloud = True
 
 ##### END OF USER INPUTS #####
 
@@ -385,96 +390,104 @@ def verifyMetric(g , ri , indices):
 
 
 ### Define function to detect coordinate and "real" singularities in the metric
-def findSings(g , ginv , christoffels , indices , coords):
+def findSings(g , ginv , christoffels , indices , coords , doCoordS , doCurveS):
 
     ### Check One: Do any coordinate values cause g to be singular
-    # Find det(g)
-    detg = sp.factor(g.det())
+    if doCoordS == False:
+        det_singularities = {str(coord) : None for coord in coords}
+        metric_singularities = {str(coord) : None for coord in coords}
 
-    # Solve for when det(g) = 0
-    det_singularities = {}
+    else:
+        # Find det(g)
+        detg = sp.factor(g.det())
 
-    for coord in coords:
+        # Solve for when det(g) = 0
+        det_singularities = {}
 
-        try:
-            solutions = sp.solve(
-                sp.Eq(detg , 0) ,
-                coord
-            )
+        for coord in coords:
 
-            if solutions:
-                det_singularities[str(coord)] = solutions
+            try:
+                solutions = sp.solve(
+                    sp.Eq(detg , 0) ,
+                    coord
+                )
 
-        except Exception:
-            det_singularities[str(coord)] = (
-                "No solution to det(g) = 0"
-            )
+                if solutions:
+                    det_singularities[str(coord)] = solutions
+
+            except Exception:
+                det_singularities[str(coord)] = (
+                    "No solution to det(g) = 0"
+                )
 
 
-    ### Check Two: Do any components of g have possible areas where they are undefined?
-    metric_singularities = {}
+        ### Check Two: Do any components of g have possible areas where they are undefined?
+        metric_singularities = {}
 
-    for mu in range(0 , 4):
-        for nu in range(0 , 4):
+        for mu in range(0 , 4):
+            for nu in range(0 , 4):
 
-            expr = sp.factor(g[mu , nu])
+                expr = sp.factor(g[mu , nu])
 
-            # Ignore if g_munu = 0
-            if expr == 0:
-                continue
-
-            # For each coordinate see if singular points exist
-            component_singularities = {}
-            for coord in coords:
-
-                try:
-                    singular_points = sp.singularities(
-                        expr ,
-                        coord
-                    )
-
-                    if singular_points != sp.EmptySet:
-                        component_singularities[str(coord)] = (
-                            singular_points
-                        )
-
-                except Exception:
-                    # Continue if component has no singular value
+                # Ignore if g_munu = 0
+                if expr == 0:
                     continue
 
-            # Label singularities by correct index
-            if component_singularities:
+                # For each coordinate see if singular points exist
+                component_singularities = {}
+                for coord in coords:
 
-                metric_singularities[(mu , nu)] = (
-                    component_singularities
-                )
+                    try:
+                        singular_points = sp.singularities(
+                            expr ,
+                            coord
+                        )
+
+                        if singular_points != sp.EmptySet:
+                            component_singularities[str(coord)] = (
+                                singular_points
+                            )
+
+                    except Exception:
+                        # Continue if component has no singular value
+                        continue
+
+                # Label singularities by correct index
+                if component_singularities:
+
+                    metric_singularities[(mu , nu)] = (
+                        component_singularities
+                    )
 
 
     ### Check Three: Check for real singularities using a curvature invariant
-    # Calculate Riemann tensor
-    (R , R_Function) = calcRiemann(christoffels = christoffels , coords = coords , indices = indices)
+    if doCurveS == False:
+        K_singularities = {str(coord) : None for coord in coords}
+    else:
+        # Calculate Riemann tensor
+        (R , R_Function) = calcRiemann(christoffels = christoffels , coords = coords , indices = indices)
 
-    # Calculate Kretschmann scalar
-    (K , K_Function) = calcKret(Riemann = R , g = g , ginv = ginv , coords = coords)
+        # Calculate Kretschmann scalar
+        (K , K_Function) = calcKret(Riemann = R , g = g , ginv = ginv , coords = coords)
 
-    # Calculate singularities of K
-    K_singularities = {}
+        # Calculate singularities of K
+        K_singularities = {}
 
-    for coord in coords:
+        for coord in coords:
 
-        try:
-            singular_points = sp.singularities(
-                K ,
-                coord
-            )
-
-            if singular_points != sp.EmptySet:
-                K_singularities[str(coord)] = (
-                    singular_points
+            try:
+                singular_points = sp.singularities(
+                    K ,
+                    coord
                 )
 
-        except Exception:
-            pass
+                if singular_points != sp.EmptySet:
+                    K_singularities[str(coord)] = (
+                        singular_points
+                    )
+
+            except Exception:
+                pass
 
 
     ### Finally return as large dictionary
@@ -606,7 +619,10 @@ def findAccel(sol , change_of_state):
 
 
 ### Define function to integrate the geodesic equations
-def integrateGeodesics(g , F , Fviz , qmrat , christoffels , christoffelsviz , indices , cur_pos , cur_vel , sing_data , coordinate_info , runtime , stepsize):
+def integrateGeodesics(g , F , Fviz , qmrat , christoffels , christoffelsviz ,
+                       indices , cur_pos , cur_vel , sing_data , coordinate_info ,
+                       runtime , stepsize ,
+                       plot_deviation = False , deviation_sep = .1):
 
     # Define the initial state vector
     initial_state = [
@@ -700,6 +716,103 @@ def integrateGeodesics(g , F , Fviz , qmrat , christoffels , christoffelsviz , i
         max_step = stepsize
     )
 
+    # Run particle cloud integration if required
+    deviation_y = None
+    if plot_deviation == True:
+
+        # Store particle solutions
+        deviation_sols = []
+
+        # We generate 6 new particles whose initial positions are deviated from + and - coord directions
+        def perturbInitialState(cur_pos, cur_vel, deviation_sep):
+
+            perturbed_initial_states = []
+
+            for coordinate_index in range(1, 4):
+                # + direction
+                plus_pos = np.asarray(cur_pos, dtype=float).copy()
+                plus_pos[coordinate_index] += deviation_sep
+
+                plus_ut = findUt(
+                    massless_particle,
+                    plus_pos,
+                    cur_vel[1:4],
+                    g,
+                    indices
+                )
+                plus_vel = np.array([
+                    plus_ut,
+                    cur_vel[1],
+                    cur_vel[2],
+                    cur_vel[3]
+                ])
+
+                plus_state = np.concatenate([
+                    plus_pos,
+                    plus_vel
+                ])
+
+                perturbed_initial_states.append(plus_state)
+
+                # - direction
+                minus_pos = np.asarray(cur_pos, dtype=float).copy()
+                minus_pos[coordinate_index] -= deviation_sep
+
+                minus_ut = findUt(
+                    massless_particle,
+                    minus_pos,
+                    cur_vel[1:4],
+                    g,
+                    indices
+                )
+                minus_vel = np.array([
+                    minus_ut,
+                    cur_vel[1],
+                    cur_vel[2],
+                    cur_vel[3]
+                ])
+
+                minus_state = np.concatenate([
+                    minus_pos,
+                    minus_vel
+                ])
+
+                perturbed_initial_states.append(minus_state)
+
+            return perturbed_initial_states
+        perturbed_initial_states = perturbInitialState(cur_pos, cur_vel, deviation_sep)
+
+        for neighbor_initial_state in perturbed_initial_states:
+            neighbor_sol = solve_ivp(
+                fun = change_of_state ,
+                t_span = (0 , runtime) ,
+                y0 = neighbor_initial_state ,
+                method = 'Radau' ,
+                max_step = stepsize
+            )
+            deviation_sols.append(neighbor_sol)
+
+        # Put cloud on central particle's integration grid
+        deviation_y = np.zeros(
+            (
+                len(deviation_sols) ,
+                8 ,
+                len(sol.t)
+            )
+        )
+
+        for particle_index , neighbor_sol in enumerate(deviation_sols):
+            for component in range(0 , 8):
+                deviation_y[
+                    particle_index,
+                    component,
+                    :
+                ] = np.interp(
+                    sol.t ,
+                    neighbor_sol.t ,
+                    neighbor_sol.y[component]
+                )
+
     # Make 3speed array
     spatvel = find3speed(lam = sol.t , y = sol.y , g = g , indices = indices)
 
@@ -731,7 +844,8 @@ def integrateGeodesics(g , F , Fviz , qmrat , christoffels , christoffelsviz , i
         F = Fviz ,
         particle_info = (particle_mass , particle_charge) ,
         sing_data = sing_data ,
-        init = [cur_pos , cur_vel]
+        init = [cur_pos , cur_vel] ,
+        cloudinfo = deviation_y ,
     )
 
     # Return solution
@@ -762,7 +876,8 @@ if physically_viable:
 
 
 ### Analyze metric for singularities
-singularity_data = findSings(g = g , ginv = ginv , christoffels = ConnectionsSym , indices = indices , coords = coords)
+singularity_data = findSings(g = g , ginv = ginv , christoffels = ConnectionsSym , indices = indices , coords = coords ,
+                             doCoordS=calculate_CoordSingularities , doCurveS=calculate_CurveSingularities)
 
 
 ### Find initial ut
@@ -779,7 +894,7 @@ sol = integrateGeodesics(g = g , F = F , Fviz = Fviz , qmrat = qmrat ,
                          christoffels = Connections , christoffelsviz = ConnectionsSym ,
                          indices = indices , cur_pos = ri , cur_vel = ui ,
                          sing_data = singularity_data , coordinate_info = coordinate_info ,
-                         runtime = lamTot , stepsize = stepsize)
+                         runtime = lamTot , stepsize = stepsize , plot_deviation = make_cloud)
 print(sol.message)
 print(sol.status)
 
