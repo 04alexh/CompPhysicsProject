@@ -717,7 +717,7 @@ def integrateGeodesics(g , F , Fviz , qmrat , christoffels , christoffelsviz ,
     )
 
     # Run particle cloud integration if required
-    deviation_y = None
+    deviation_y = 0
     if plot_deviation == True:
 
         # Store particle solutions
@@ -819,9 +819,6 @@ def integrateGeodesics(g , F , Fviz , qmrat , christoffels , christoffelsviz ,
     # Make local 3speed array
     locvel = findLoc3speed(lam = sol.t , y = sol.y , g = g , indices = indices)
 
-    # Make "acceleration" array
-    accelerations = findAccel(sol = sol , change_of_state = change_of_state)
-
     # Create filename for .npz file of sim
     now = datetime.now()
     file_timestamp = now.strftime("%Y%m%d_%H%M%S")
@@ -832,7 +829,6 @@ def integrateGeodesics(g , F , Fviz , qmrat , christoffels , christoffelsviz ,
         FILENAME ,
         t = sol.t ,
         y = sol.y ,
-        a = accelerations ,
         christos = christoffelsviz ,
         vel = spatvel ,
         locvel = locvel ,
