@@ -858,7 +858,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
     cloudinfo = data["cloudinfo"]
     if cloudinfo.shape == ():
         cloudinfo = cloudinfo.item()
-    if cloudinfo is not None:
+    if cloudinfo != 0:
         cloudinfo = np.asarray(cloudinfo , dtype = float) #Load particle cloud if exists
 
     # Ensure cartesian transform is meaningful
@@ -1003,6 +1003,8 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
         determinant_singularities = set()
         if sing_data["det_singularities"] != { str(coord) : None for coord in coords }:
             for coord_name, values in sing_data["det_singularities"].items():
+                if isinstance(values , sp.ConditionSet):
+                    continue
                 for value in values:
                     determinant_singularities.add(
                         (
@@ -1016,6 +1018,8 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
         if sing_data["metric_singularities"] != { str(coord) : None for coord in coords }:
             for component, singularities in sing_data["metric_singularities"].items():
                 for coord_name, values in singularities.items():
+                    if isinstance(values , sp.ConditionSet):
+                        continue
                     for value in values:
                         metric_singularities.add(
                             (
@@ -1028,6 +1032,8 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
         K_singularities = set()
         if sing_data["K_singularities"] != { str(coord) : None for coord in coords }:
             for coord_name, values in sing_data["K_singularities"].items():
+                if isinstance(values , sp.ConditionSet):
+                    continue
                 for value in values:
                     K_singularities.add(
                         (
@@ -1822,7 +1828,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
     cloud_Z_frames = None
     if plot_deviation:
 
-        if cloudinfo is None:
+        if cloudinfo is 0:
             raise ValueError(
                 "Error: plot_deviation is true, but this .npz did not run cloud!"
             )
@@ -2525,7 +2531,7 @@ def MakeSimWriteOut(data_path):
     cloudtxt = fig.text(
         .99 ,
         .15 ,
-        f"Has integrated perturbed paths: \n {data["cloudinfo"] is not None}" ,
+        f"Has integrated perturbed paths: \n {data["cloudinfo"] is 0}" ,
         ha = "right" ,
         va = "top" ,
         fontsize = 10
