@@ -858,7 +858,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
     cloudinfo = data["cloudinfo"]
     if cloudinfo.shape == ():
         cloudinfo = cloudinfo.item()
-    if cloudinfo != 0:
+    if cloudinfo is not 0:
         cloudinfo = np.asarray(cloudinfo , dtype = float) #Load particle cloud if exists
 
     # Ensure cartesian transform is meaningful
@@ -1283,7 +1283,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
                                 * u[nu]
                                 * F_contravar[rho , sigma]
                             )
-                B_covar[mu] = expr
+                B_covar[mu] = -expr
 
             # Again we want our field vectors with contravariant components
             # B_nu * g^munu = B^mu
@@ -1477,7 +1477,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
 
             # Make scaler
             def log_scale_vector(
-                    vector , log_min , log_max , min_length = .5 , max_length = 7
+                    vector , log_min , log_max , min_length = 1 , max_length = 2
             ):
                 magnitude = np.linalg.norm(vector)
 
