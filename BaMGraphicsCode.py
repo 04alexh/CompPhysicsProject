@@ -480,7 +480,7 @@ def Make2DAnimation(data_path , param_by_affine = False , nframes = 1000):
                 rf"{coords[2]} = {y[2][frame]:.3f} | "
                 rf"{coords[3]} = {y[3][frame]:.3f}$"
                 "\n"
-                rf"$vFar = {vel[frame]:.3f} | "
+                rf"$vCoord = {vel[frame]:.3f} | "
                 rf"vLoc = {locvel[frame]:.3f}$"
             )
         else:
@@ -494,7 +494,7 @@ def Make2DAnimation(data_path , param_by_affine = False , nframes = 1000):
                 rf" {coords[2]} = {y[2][frame]:.3f} | "
                 rf" {coords[3]} = {y[3][frame]:.3f}$"
                 "\n"
-                rf"$vFar = {vel[frame]:.3f} | "
+                rf"$vCoord = {vel[frame]:.3f} | "
                 rf"vLoc = {locvel[frame]:.3f}$"
             )
 
