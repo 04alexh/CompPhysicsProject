@@ -1964,6 +1964,16 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
         linewidths = 1.5
     )
 
+    # Add cbar for trail color as well
+    cbar = fig.colorbar(
+        trail , 
+        ax = ax ,
+        pad = .1
+    )
+    cbar.set_label(
+        "Frame Number"
+    )
+
     # Add particle object also
     if particle_info[0] == 0:
         col = "yellow"
