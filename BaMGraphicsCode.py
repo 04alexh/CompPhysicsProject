@@ -1956,12 +1956,12 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
     # New code colors trail based on parameter
     trail = Line3DCollection(
         [] ,
-        cmap = "winter" ,
+        cmap = "brg" ,
         norm = Normalize(
             vmin = param_frames[0] ,
             vmax = param_frames[-1]
         ) ,
-        linewidths = 1.5
+        linewidths = 2.7
     )
 
     # Add cbar for trail color as well
