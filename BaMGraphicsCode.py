@@ -1,6 +1,8 @@
 ##### IMPORTS #####
 from matplotlib.animation import FuncAnimation , PillowWriter
+from matplotlib.colors import Normalize
 from matplotlib.widgets import Slider , Button
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
 import matplotlib.pyplot as plt
 import numpy as np
 import sympy as sp
@@ -1943,13 +1945,23 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
     )
 
     # Add trail for particle to trace
-    trail , = ax.plot(
+    # trail , = ax.plot(
+    #     [] ,
+    #     [] ,
+    #     [] ,
+    #     color = "black" ,
+    #     lw = 1 ,
+    #     ls = "-"
+    # )    <--- Old code, keeping for posterity
+    # New code colors trail based on parameter
+    trail = Line3DCollection(
         [] ,
-        [] ,
-        [] ,
-        color = "black" ,
-        lw = 1 ,
-        ls = "-"
+        cmap = "winter" ,
+        norm = Normalize(
+            vmin = param_frames[0] ,
+            vmax = param_frames[-1]
+        ) ,
+        linewidths = 1.5
     )
 
     # Add particle object also
@@ -2182,14 +2194,37 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
         nonlocal E_arrow , B_arrow , aem_arrow , tidal_arrows , neighbor_particles , deviation_particles , deviation_trails
         frame = int(frame)
 
-        # Set trail
-        trail.set_data(
-            X_frames[:frame + 1] ,
-            Y_frames[:frame + 1]
-        )
-        trail.set_3d_properties(
-            Z_frames[:frame + 1]
-        )
+        # # Set trail
+        # trail.set_data(
+        #     X_frames[:frame + 1] ,
+        #     Y_frames[:frame + 1]
+        # )
+        # trail.set_3d_properties(
+        #     Z_frames[:frame + 1]
+        # ) <--- Old code, keeping for posterity
+        # New trail updates and changes color 
+        if frame > 0:
+            points = np.column_stack(
+                (
+                    X_frames[:frame + 1] ,
+                    Y_frames[:frame + 1] ,
+                    Z_frames[:frame + 1]
+                )
+            )
+            segments = np.stack(
+                [
+                    points[:-1] ,
+                    points[1:]
+                ] ,
+                axis = 1
+            )
+            trail.set_segments(segments)
+            trail.set_array(np.asarray(param_frames[:frame])) #Color segements according to animation parameter
+
+            # Add trail object to axis if doesn't exist
+            if trail.axes is None:
+                ax.add_collection3d(trail)
+                
 
         # Set particle
         particle.set_data(
