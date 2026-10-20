@@ -42,7 +42,7 @@ visualize_cloud = False
 ##### CREATE GRAPHICS #####
 
 ### Define function to make 2D plots of coordinates
-def Make2DPlots(data_path):
+def Make2DPlots(data_path , param_by_affine):
 
     # Read the data
     data = np.load(data_path , allow_pickle = True)
@@ -120,6 +120,14 @@ def Make2DPlots(data_path):
 
     plot_num = 1
 
+    # Allow for coloring by affine or timelike coord
+    if param_by_affine:
+        c_coord = t
+        c_label = r"$\lambda$"
+    else:
+        c_coord = y[0]
+        c_label = f"{coords[0]}"
+
     for i in range(0 , 3):
         for j in range(i + 1 , 3):
 
@@ -144,11 +152,11 @@ def Make2DPlots(data_path):
                     theta_vals = y[j + 1]
                     r_vals = y[i + 1]
 
-                ax.scatter(theta_vals , r_vals , c = t , cmap = "plasma" , s = 6)
+                ax.scatter(theta_vals , r_vals , c = c_coord , cmap = "brg" , s = 6)
 
             else:
                 ax = fig2.add_subplot(2 , 3 , plot_num)
-                ax.scatter(y[i + 1] , y[j + 1] , c = t , cmap = "plasma" , s = 6)
+                ax.scatter(y[i + 1] , y[j + 1] , c = c_coord , cmap = "brg" , s = 6)
                 ax.set_xlabel(f"{coords[i + 1]}")
                 ax.set_ylabel(f"{coords[j + 1]}")
 
@@ -156,9 +164,9 @@ def Make2DPlots(data_path):
             plot_num += 1
 
     # Add color map legend
-    sm = plt.cm.ScalarMappable(cmap = "plasma")
+    sm = plt.cm.ScalarMappable(cmap = "brg")
     sm.set_array(t)
-    fig2.colorbar(sm , ax = fig2.axes , label = "Affine Parameter")
+    fig2.colorbar(sm , ax = fig2.axes , label = c_label)
 
 
 ### Define function to make 2D animations of the trajectory
@@ -2595,7 +2603,7 @@ def MakeSimWriteOut(data_path):
 
 ### Run graphics
 if static2D_plots:
-    Make2DPlots(data_path=data_path)
+    Make2DPlots(data_path=data_path, param_by_affine=param_by_affine)
 if animation2D:
     Make2DAnimation(data_path=data_path, param_by_affine=param_by_affine, nframes=1000)
 if animation3D:
