@@ -487,7 +487,7 @@ def Make2DAnimation(data_path , param_by_affine = False , nframes = 1000):
             )
         else:
             time_txt.set_text(
-                rf"$\lambda = {lam_frames[frame]:.3f}"
+                rf"$\lambda = {param_frames[frame]:.3f}"
                 rf"\qquad"
                 rf"{coords[0]} = {t_frames[frame]:.3f}$"
             )
