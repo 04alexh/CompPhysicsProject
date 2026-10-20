@@ -1970,9 +1970,15 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
         ax = ax ,
         pad = .1
     )
-    cbar.set_label(
-        "Frame Number"
-    )
+
+    if param_by_affine == True:
+        cbar.set_label(
+            r"$\lambda$"
+        )
+    else:
+        cbar.set_label(
+            f"{coords[0]}"
+        )
 
     # Add particle object also
     if particle_info[0] == 0:
