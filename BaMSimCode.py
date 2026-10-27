@@ -403,6 +403,10 @@ def verifyMetric(g , ri , indices):
     row_scales = np.max(np.abs(g_numeric) , axis = 1)
     assert np.all(row_scales > 0) , "Error: Metric is singular at initial position!"
 
+    D = np.diag(1 / row_scales**.5)
+    g_scaled = D @ g_numeric @ D
+    eigs = np.linalg.eigvals(g_scaled)
+
     # Check for 1 negative and 3 positive eigenvalues
     tol = 1e-10 #tolerance
     num_negative = np.sum(eigs < -tol)
