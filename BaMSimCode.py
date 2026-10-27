@@ -8,11 +8,14 @@ import sympy as sp
 
 ##### USER INPUTS #####
 
+#INPUT: Please set if you want to use geometrized or SI units
+geometrized_units = True
+
 #INPUT: Please define the symbols of your coordinate system with the timelike coordinate being the FIRST symbol.
 coords = sp.symbols("t r theta phi")
 
-for c in coords: #DO NOT TOUCH THIS LOOP
-    globals()[str(c)] = c
+for coord in coords: #DO NOT TOUCH THIS LOOP
+    globals()[str(coord)] = coord
 
 #INPUT: Please set if the spacelike coordinates represent a "length" or an "angle" where 1=angular and 0=length.
 is_angular = [
@@ -109,8 +112,13 @@ coordinate_info = {
         str(coords[2]) : coordinate_ranges[2],
         str(coords[3]) : coordinate_ranges[3]
     } ,
-    "is_angular" : is_angular
+    "is_angular" : is_angular ,
+    "geometrized_units" : geometrized_units
 }
+
+# Constants if needed
+c = 299792458 #m/s
+G = 6.67430e-11 #Nm^2/kg^2
 
 
 ### Define function for calculation of the Christoffel symbols
@@ -310,13 +318,15 @@ def calcKret(Riemann , g , ginv , coords):
 def findUt(is_null , r , v , g , indices):
 
     # There are two normalization conditions for 4-velocity:
-    # 1. If particle is massive, u^2 = -1
+    # 1. If particle is massive, u^2 = -1 or -c^2
     # 2. If particle is massless, u^2 = 0
 
     if is_null:
         condition = 0
-    else:
+    elif geometrized_units:
         condition = -1
+    else:
+        condition = -c**2
 
     # Sub in initial positions into the metric
     subs_dict = {
@@ -378,15 +388,26 @@ def verifyMetric(g , ri , indices):
     }
 
     g_initial = g.subs(subs_dict)
-    eigs = g_initial.eigenvals()
+    # eigs = g_initial.eigenvals()
 
-    for (key , value) in eigs.items():
+    # for (key , value) in eigs.items():
 
-        if key < 0:
-            if value == 1:
-                check_negative = True
+    #     if key < 0:
+    #         if value == 1:
+    #             check_negative = True
 
-    assert check_negative , "Error: This metric does not have the correct signature!"
+    # assert check_negative , "Error: This metric does not have the correct signature!" <--- Old legacy code, only assumes geometrized
+
+    # To account for possibility of SI units, need to scale g so that the eigenvalue calculation doesn't fail due to resource exhaust
+    g_numeric = np.array(g_initial.evalf(30) , dtype = float)
+    row_scales = np.max(np.abs(g_numeric) , axis = 1)
+    assert np.all(row_scales > 0) , "Error: Metric is singular at initial position!"
+
+    # Check for 1 negative and 3 positive eigenvalues
+    tol = 1e-10 #tolerance
+    num_negative = np.sum(eigs < -tol)
+    num_positive = np.sum(eigs > tol)
+    assert num_negative == 1 and num_positive == 3 , "Error: This metric does not have the correct signature!"
 
 
 ### Define function to detect coordinate and "real" singularities in the metric
@@ -561,15 +582,26 @@ def findLoc3speed(lam , y , g , indices):
             dtype = float
         )
 
-        # The local 3 speed is measured by a stationary observer whose 4-velo is [1,0,0,0] = uobs
-        # Thus uobs^2 = -1 = g_munu * u[mu] * u[nu] = g_tt * u[t]^2
+        # The local 3 speed is measured by a stationary observer whose 4-velo is [1,0,0,0] = uobs (or [c,0,0,0])
+        # Thus uobs^2 = -1 (or -c^2) = g_munu * u[mu] * u[nu] = g_tt * u[t]^2
         g00 = numeric_g[0 , 0]
-        uobs = np.array([
-            1 / (-1 * g00)**.5 ,
-            0 ,
-            0 ,
-            0
-        ])
+
+        if geometrized_units:
+            uobs = np.array([
+                1 / (-1 * g00)**.5 ,
+                0 ,
+                0 ,
+                0
+            ])
+            norm = 1.0
+        else:
+            uobs = np.array([
+                c / (-1 * g00)**.5 ,
+                0 ,
+                0 , 
+                0
+            ])
+            norm = c**2
 
         # Lower the index of the 4velocity
         # u_mu = g_munu * u^nu
@@ -585,11 +617,22 @@ def findLoc3speed(lam , y , g , indices):
         lor_fac = -1 * np.dot(
             uobs_lower ,
             u
-        )
+        ) / norm 
 
-        # Find local speed (lor_fac = sqrt(1 / 1-v^2))
-        v_local = np.sqrt(
-            1 - (1 / lor_fac**2))
+        # # Find local speed (lor_fac = sqrt(1 / 1-v^2))
+        # v_local = np.sqrt(
+        #     1 - (1 / lor_fac**2))
+
+        # nearvels.append(v_local) <-- Legacy code, only works for geometrized units
+        # Find the squared geometrized speed
+        speed_fraction_sq = 1.0 - 1.0 / lor_fac**2
+        speed_fraction_sq = max(0.0 , speed_fraction_sq)
+
+        # Convert correctly based on if need SI or geometrized
+        if geometrized_units:
+            v_local = speed_fraction_sq**.5
+        else:
+            v_local = c * speed_fraction_sq**.5
 
         nearvels.append(v_local)
 
