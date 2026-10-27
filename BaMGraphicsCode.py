@@ -481,31 +481,31 @@ def Make2DAnimation(data_path , param_by_affine = False , nframes = 1000):
         # Update texts
         if param_by_affine == False:
             time_txt.set_text(
-                rf"$\lambda = {lam_frames[frame]:.3f}"
+                rf"$\lambda = {lam_frames[frame]:.3e}"
                 rf"\qquad"
-                rf"{coords[0]} = {param_frames[frame]:.3f}$"
+                rf"{coords[0]} = {param_frames[frame]:.3e}$"
             )
             posv_txt.set_text(
                 rf"${coords[1]} = {y[1][frame]:.3f} | "
                 rf"{coords[2]} = {y[2][frame]:.3f} | "
                 rf"{coords[3]} = {y[3][frame]:.3f}$"
                 "\n"
-                rf"$vCoord = {vel[frame]:.3f} | "
-                rf"vLoc = {locvel[frame]:.3f}$"
+                rf"$vCoord = {vel[frame]:.3e} | "
+                rf"vLoc = {locvel[frame]:.3e}$"
             )
         else:
             time_txt.set_text(
-                rf"$\lambda = {param_frames[frame]:.3f}"
+                rf"$\lambda = {param_frames[frame]:.3e}"
                 rf"\qquad"
-                rf"{coords[0]} = {t_frames[frame]:.3f}$"
+                rf"{coords[0]} = {t_frames[frame]:.3e}$"
             )
             posv_txt.set_text(
                 rf"${coords[1]} = {y[1][frame]:.3f} | "
                 rf" {coords[2]} = {y[2][frame]:.3f} | "
                 rf" {coords[3]} = {y[3][frame]:.3f}$"
                 "\n"
-                rf"$vCoord = {vel[frame]:.3f} | "
-                rf"vLoc = {locvel[frame]:.3f}$"
+                rf"$vCoord = {vel[frame]:.3e} | "
+                rf"vLoc = {locvel[frame]:.3e}$"
             )
 
         fig.canvas.draw_idle()
@@ -2407,9 +2407,9 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
 
         # Set time_txt
         time_txt.set_text(
-            rf"$\lambda = {lam_frames[frame]:.3f}"
+            rf"$\lambda = {lam_frames[frame]:.3e}"
             rf"\qquad"
-            rf"{coords[0]} = {param_frames[frame]:.3f}$"
+            rf"{coords[0]} = {param_frames[frame]:.3e}$"
         )
 
         # Set posv_txt
@@ -2418,8 +2418,8 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
             rf"$Y = {Y_frames[frame]:.3f}$ | "
             rf"$Z = {Z_frames[frame]:.3f}$"
             "\n"
-            rf"$vCoord = {vel_frames[frame]:.3f}$ | "
-            rf"$vLoc = {locvel_frames[frame]:.3f}$"
+            rf"$vCoord = {vel_frames[frame]:.3e}$ | "
+            rf"$vLoc = {locvel_frames[frame]:.3e}$"
         )
 
         # Redraw the canvas
@@ -2510,6 +2510,7 @@ def MakeSimWriteOut(data_path):
     vel = np.asarray(data["vel"], dtype=float)
     locvel = np.asarray(data["locvel"], dtype=float)
     ranges = data["coordinate_info"].item()["ranges"]
+    units = data["coordinate_info"].item()["geometrized_units"]
 
     # Create figure
     fig = plt.figure(figsize=(20 , 20))
@@ -2595,6 +2596,7 @@ def MakeSimWriteOut(data_path):
         va = "top" ,
         fontsize = 10
     )
+
 
 
 
