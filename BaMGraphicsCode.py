@@ -166,7 +166,7 @@ def Make2DPlots(data_path , param_by_affine):
     # Add color map legend
     sm = plt.cm.ScalarMappable(cmap = "brg")
     sm.set_array(t)
-    fig2.colorbar(sm , ax = fig2.axes , label = c_label)
+    fig2.colorbar(sm , ax = fig2.axes , label = c_label , shrink = .6)
 
 
 ### Define function to make 2D animations of the trajectory
@@ -411,7 +411,7 @@ def Make2DAnimation(data_path , param_by_affine = False , nframes = 1000):
 
     # Intialize slider and button
     slider_ax = fig.add_axes(
-        [.2 , .08 , .6 , .03]
+        [.15 , .08 , .6 , .03]
     )
     slider = Slider(
         slider_ax ,
@@ -1976,7 +1976,8 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
     cbar = fig.colorbar(
         trail , 
         ax = ax ,
-        pad = .1
+        pad = .1 ,
+        shrink = .6
     )
 
     if param_by_affine == True:
@@ -2188,7 +2189,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
 
     # Add a slider to move across frame parameter
     slider_ax = fig.add_axes(
-        [.2 , .08 , .6 , .03]
+        [.15 , .08 , .6 , .03]
     )
 
     slider = Slider(
