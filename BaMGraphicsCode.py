@@ -864,6 +864,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
     locvel = np.asarray(data["locvel"] , dtype = float)
     ranges = data["coordinate_info"].item()["ranges"]
     particle_info = data["particle_info"]
+    geometrized = data["coordinate_info"].item()["geometrized_units"]
 
     cloudinfo = data["cloudinfo"]
     if cloudinfo.shape == ():
@@ -2406,21 +2407,31 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
                     cloud_Z_frames[particle_index , :frame + 1]
                 )
 
+        # Define a unit text
+        if not geometrized:
+            time_unit = "s"
+            length_unit = "m"
+            velocity_unit = r"$\frac{m}{s}$"
+        else:
+            time_unit = ""
+            length_unit = ""
+            velocity_unit = ""
+        
         # Set time_txt
         time_txt.set_text(
-            rf"$\lambda = {lam_frames[frame]:.3e}"
-            rf"\qquad"
-            rf"{coords[0]} = {param_frames[frame]:.3e}$"
+            rf"$\lambda = {lam_frames[frame]:.3e}$ {time_unit}"
+            rf"$\qquad$"
+            rf"${coords[0]} = {param_frames[frame]:.3e}$ {time_unit}"
         )
 
         # Set posv_txt
         posv_txt.set_text(
-            rf"$X = {X_frames[frame]:.3f}$ | "
-            rf"$Y = {Y_frames[frame]:.3f}$ | "
-            rf"$Z = {Z_frames[frame]:.3f}$"
+            rf"$X = {X_frames[frame]:.3f}{length_unit}$ | "
+            rf"$Y = {Y_frames[frame]:.3f}{length_unit}$ | "
+            rf"$Z = {Z_frames[frame]:.3f}{length_unit}$"
             "\n"
-            rf"$vCoord = {vel_frames[frame]:.3e}$ | "
-            rf"$vLoc = {locvel_frames[frame]:.3e}$"
+            rf"$vCoord = {vel_frames[frame]:.3e}${velocity_unit} | "
+            rf"$vLoc = {locvel_frames[frame]:.3e}${velocity_unit"
         )
 
         # Redraw the canvas
