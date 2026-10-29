@@ -2431,7 +2431,7 @@ def Make3DAnimation(data_path , param_by_affine = False , nframes = 1000 ,
             rf"$Z = {Z_frames[frame]:.3f}{length_unit}$"
             "\n"
             rf"$vCoord = {vel_frames[frame]:.3e}${velocity_unit} | "
-            rf"$vLoc = {locvel_frames[frame]:.3e}${velocity_unit"
+            rf"$vLoc = {locvel_frames[frame]:.3e}${velocity_unit}"
         )
 
         # Redraw the canvas
