@@ -877,7 +877,7 @@ def integrateGeodesics(g , F , Fviz , qmrat , christoffels , christoffelsviz ,
                 accel = 0
 
                 # Gravitational effects
-                for mu in range(0 , 4)
+                for mu in range(0 , 4):
                     for nu in range(0 , 4):
                         accel += -1 * (numeric_christos[k , mu , nu] * u[mu] * u[nu])
 
