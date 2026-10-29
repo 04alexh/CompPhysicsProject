@@ -217,6 +217,27 @@ def calcChristoffel(g , indices , coords):
 
     return Connections , ginv , None
 
+# New symbolic christoffel function
+def calcChristoffelSym(g , ginv , indices , coords):
+
+    # Calculate coefficients symbolically using the Levi-Civita connection:
+    christoffel = sp.MutableDenseNDimArray.zeros(4, 4, 4)
+    # Γ^m_np = .5 * g^ms * (deriv_p[g_sn] + deriv_n[g_sp] - deriv_s[g_np])
+    for mu in range(0, 4):
+        for nu in range(0, 4):
+            for rho in range(0, 4):
+                expr = 0
+                for sigma in range(0, 4):
+                    expr += .5 * ginv[mu, sigma] * (
+                            sp.diff(g[sigma, nu], indices[rho]) +
+                            sp.diff(g[sigma, rho], indices[nu]) -
+                            sp.diff(g[nu, rho], indices[sigma])
+                    )
+
+                christoffel[mu, nu, rho] = expr
+
+    return christoffel
+
 
 ### Define function for calculation of the Faraday tensor (symbolic only now)
 def calcFaraday(Apot , indices , coords , ginv):
