@@ -122,39 +122,103 @@ G = 6.67430e-11 #Nm^2/kg^2
 
 
 ### Define function for calculation of the Christoffel symbols
+# def calcChristoffel(g , indices , coords):
+
+#     # Find g inverse
+#     ginv = g.inv()
+
+#     # Initialize connection coefficients as a 4x4x4 array of zeros
+#     christoffel = sp.MutableDenseNDimArray.zeros(4 , 4 , 4)
+
+#     # Calculate coefficients using the Levi-Civita connection:
+#     # Γ^m_np = .5 * g^ms * (deriv_p[g_sn] + deriv_n[g_sp] - deriv_s[g_np])
+#     for mu in range(0 , 4):
+#         for nu in range(0 , 4):
+#             for rho in range(0 , 4):
+#                 expr = 0
+#                 for sigma in range(0 , 4):
+#                     expr += .5 * ginv[mu , sigma] * (
+#                         sp.diff(g[sigma , nu] , indices[rho]) +
+#                         sp.diff(g[sigma , rho] , indices[nu]) -
+#                         sp.diff(g[nu , rho] , indices[sigma])
+#                     )
+
+#                 christoffel[mu , nu , rho] = expr
+
+#     # Convert christoffel into a function that can sub values into the variables if required
+#     Gamma_Function = [[[
+#         sp.lambdify(coords , christoffel[mu , nu , rho] , "numpy") for rho in range(0 , 4)]
+#             for nu in range(0 , 4)]
+#             for mu in range(0 , 4)]
+
+#     return (Gamma_Function , ginv , christoffel) <--- Legacy code, inefficient when using SI units
+
+### Define a new function to get the numeric Christoffels
 def calcChristoffel(g , indices , coords):
 
-    # Find g inverse
-    ginv = g.inv()
+    # Lambdify the metric itself
+    metric_fn = sp.lambdify(coords , g , modules = "numpy")
 
-    # Initialize connection coefficients as a 4x4x4 array of zeros
-    christoffel = sp.MutableDenseNDimArray.zeros(4 , 4 , 4)
+    # Lambdify the derivatives of the metric ie dg/dx^k
+    dg_fn = [
+        sp.lambdify(
+            coords ,
+            g.diff(coords[k]) ,
+            modules = "numpy"
+        )
+        for k in range(len(coords))
+    ]
 
-    # Calculate coefficients using the Levi-Civita connection:
-    # Γ^m_np = .5 * g^ms * (deriv_p[g_sn] + deriv_n[g_sp] - deriv_s[g_np])
-    for mu in range(0 , 4):
+    # Calculate the connection at this position using this subfunc
+    def Connections(position):
+        position = np.asarray(position , dtype = float)
+
+        g_num = np.asarray(
+            metric_fn(*position) , dtype = float
+        )
+        dg_num = np.asarray(
+            [fn(*position) for fn in dg_fn] ,
+            dtype = float
+        )
+
+        # Check metric and derivatives are finite
+        if not np.all(np.isfinite(g_num)):
+            raise FloatingPointError(
+                f"Error: Metric is non-finite at position {position}!"
+            )
+        if not np.all(np.isfinite(dg_num)):
+            raise FloatingPointError(
+                f"Error: Metric derivatives non-finite at position {position}!"
+            )
+
+        # Initialize the connections
+        Gamma = np.zeros((4 , 4 , 4) , dtype = float)
+
         for nu in range(0 , 4):
             for rho in range(0 , 4):
-                expr = 0
-                for sigma in range(0 , 4):
-                    expr += .5 * ginv[mu , sigma] * (
-                        sp.diff(g[sigma , nu] , indices[rho]) +
-                        sp.diff(g[sigma , rho] , indices[nu]) -
-                        sp.diff(g[nu , rho] , indices[sigma])
-                    )
+                # Full LCC: Gamma^rho_munu = .5g^sigmarho(d_mu*g_nusigma + d_nu*g_musigma - d_sigma*g_munu
+                # Rearrange, then we get that:
+                # Gamma^sigma_nurho * g_musigma = .5 * (d_rho*g_sigmanu + d_nu*g_sigmarho - d_sigma*g_nurho
 
-                christoffel[mu , nu , rho] = expr
+                # Get right hand side of eq
+                rhs = .5 * (
+                    dg_num[rho , : , nu] + dg_num[nu , : , rho] - dg_num[: , nu , rho]
+                )
 
-    # Convert christoffel into a function that can sub values into the variables if required
-    Gamma_Function = [[[
-        sp.lambdify(coords , christoffel[mu , nu , rho] , "numpy") for rho in range(0 , 4)]
-            for nu in range(0 , 4)]
-            for mu in range(0 , 4)]
+                # Solve for Gamma with linalg solve
+                Gamma[: , nu , rho] = np.linalg.solve(
+                    g_num , rhs
+                )
 
-    return (Gamma_Function , ginv , christoffel)
+        return Gamma
+
+    # Retain ginv for posterity sake
+    ginv = g.inv()
+
+    return Connections , ginv , None
 
 
-### Define function for calculation of the Faraday tensor
+### Define function for calculation of the Faraday tensor (symbolic only now)
 def calcFaraday(Apot , indices , coords , ginv):
 
     # Initialize the Faraday tensor as a 4x4 array of zeros
@@ -188,6 +252,66 @@ def calcFaraday(Apot , indices , coords , ginv):
         for mu in range(0 , 4)]
 
     return (F_Function , F_2covar) #Save the 2covar in case we want to viz the EM fields in animation
+
+### Define function to efficiently get numeric Faraday terms
+def calcFaradayNumeric(Apot , g , indices , coords):
+
+    # Numeric function for covariant 4pot
+    A_fn = [
+        sp.lambdify(coords , Apot[mu] , modules = 'numpy') for mu in range(0 , 4)
+    ]
+
+    # Numeric function for derivatives of Apot
+    dA_fn = [
+        [
+            sp.lambdify(
+                coords ,
+                sp.diff(Apot[nu] , indices[mu]) ,
+                modules = "numpy"
+            )
+            for nu in range(0 , 4)
+        ]
+        for mu in range(0 , 4)
+    ]
+
+    # Numerical metric as well
+    g_fn = sp.lambdify(coords , g , modules = 'numpy')
+
+    def Faraday(position):
+        position = np.asarray(position , dtype = float)
+
+        # Evaluate metric and potential derivs at position
+        g_num = np.asarray(g_fn(*position) , dtype = float)
+        dA_num = np.asarray([
+            [dA_fn[mu][nu](*position) for nu in range(0 , 4)]
+            for mu in range(0 , 4)
+        ])
+
+        # Check metric and potential calcs for finite values
+        if not np.all(np.isfinite(g_num)):
+            raise FloatingPointError(
+                f"Error: Metric is non-finite at position {position}!"
+            )
+        if not np.all(np.isfinite(dA_num)):
+            raise FloatingPointError(
+                f"Error: 4-potential derivatives not finite at position {position}!"
+            )
+
+        # Get faraday by F_munu = A_nud_mu - A_mud_nu
+        F_cov = dA_num - dA_num.T
+
+        # F^mu_nu = g^mualpha F_alphanu --> F_mixed*g = F_cov solve for F_mixed
+        # Use linalg solve (more efficient)
+        F_mixed = np.linalg.solve(g_num , F_cov)
+
+        if not np.all(np.isfinite(F_mixed)):
+            raise FloatingPointError(
+                f"Error: Mixed Faraday tensor non finite at position {position}!"
+            )
+
+        return F_mixed
+
+    return Faraday
 
 
 ### Define function for calculation of the Riemann tensor
@@ -628,6 +752,7 @@ def findLoc3speed(lam , y , g , indices):
         #     1 - (1 / lor_fac**2))
 
         # nearvels.append(v_local) <-- Legacy code, only works for geometrized units
+        
         # Find the squared geometrized speed
         speed_fraction_sq = 1.0 - 1.0 / lor_fac**2
         speed_fraction_sq = max(0.0 , speed_fraction_sq)
@@ -694,12 +819,15 @@ def integrateGeodesics(g , F , Fviz , qmrat , christoffels , christoffelsviz ,
             indices[3] : state[3] ,
         }
 
-        numeric_christos = np.zeros((4 , 4 , 4))
-        for mu in range(0 , 4):
-            for nu in range(0 , 4):
-                for rho in range(0 , 4):
-                    numeric_christos[mu , nu , rho] = christoffels[mu][nu][rho](state[0] , state[1] , state[2] , state[3])
+        # numeric_christos = np.zeros((4 , 4 , 4))
+        # for mu in range(0 , 4):
+        #     for nu in range(0 , 4):
+        #         for rho in range(0 , 4):
+        #             numeric_christos[mu , nu , rho] = christoffels[mu][nu][rho](state[0] , state[1] , state[2] , state[3]) <--- Old legacy code, sympy hates doing this if numbers are big (SI units)
 
+        # New numeric christoffel calculation
+        numeric_christos = christoffels(state[0:4])
+        
         # Unpack state for organization
         pos = [state[0] , state[1] , state[2] , state[3]]
         u = [state[4] , state[5] , state[6] , state[7]]
@@ -728,18 +856,35 @@ def integrateGeodesics(g , F , Fviz , qmrat , christoffels , christoffelsviz ,
 
         else:
 
-            # Get Faraday tensor at this position
-            numeric_F = np.zeros((4 , 4))
-            for mu in range(0 , 4):
-                for nu in range(0 , 4):
-                    numeric_F[mu , nu] = F[mu][nu](state[0] , state[1] , state[2] , state[3])
+            # # Get Faraday tensor at this position
+            # numeric_F = np.zeros((4 , 4))
+            # for mu in range(0 , 4):
+            #     for nu in range(0 , 4):
+            #         numeric_F[mu , nu] = F[mu][nu](state[0] , state[1] , state[2] , state[3])
 
-            # Do geodesic eq
+            # # Do geodesic eq
+            # for k in range(0 , 4):
+            #     accel = 0
+            #     for mu in range(0 , 4):
+            #         for nu in range(0 , 4):
+            #             accel += (-1 * numeric_christos[k , mu , nu] * u[mu] * u[nu]) + (qmrat * numeric_F[k , nu] * u[nu])
+            #     accel_list.append(accel) <--- Old legacy, oops the Lorentz force is getting added 4 times lol
+
+            # Get Faraday tensor at this position and form geodesic eq with Lorentz
+            numeric_F = F(state[0:4])
+
             for k in range(0 , 4):
                 accel = 0
-                for mu in range(0 , 4):
+
+                # Gravitational effects
+                for mu in range(0 , 4)
                     for nu in range(0 , 4):
-                        accel += (-1 * numeric_christos[k , mu , nu] * u[mu] * u[nu]) + (qmrat * numeric_F[k , nu] * u[nu])
+                        accel += -1 * (numeric_christos[k , mu , nu] * u[mu] * u[nu])
+
+                # Electromagnetic effects
+                for nu in range(0 , 4):
+                    accel += qmrat * numeric_F[k , nu] * u[nu]
+
                 accel_list.append(accel)
 
         # Return the change in state vector
@@ -915,7 +1060,10 @@ if physically_viable:
 
 
 ### Calculate inverse metric and Christoffel symbols
-(Connections , ginv , ConnectionsSym) = calcChristoffel(g = g , indices = indices , coords = coords)
+(Connections , ginv , ___) = calcChristoffel(g = g , indices = indices , coords = coords)
+
+# Get symbolic version seperately
+ConnectionsSym = calcChristoffelSym(g = g , ginv = ginv , indices = indices , coords = coords)
 
 
 ### Analyze metric for singularities
@@ -929,7 +1077,10 @@ ui = [ut_init , vi[0] , vi[1] , vi[2]]
 
 
 ### Calculate Faraday tensor
-F , Fviz = calcFaraday(Apot = Apot , indices = indices , coords = coords , ginv = ginv)
+___ , Fviz = calcFaraday(Apot = Apot , indices = indices , coords = coords , ginv = ginv)
+
+# Caluclate numeric version for more efficient calculation
+F = calcFaradayNumeric(Apot = Apot , g = g , indices = indices , coords = coords)
 
 
 ### Integrate the geodesic equations
