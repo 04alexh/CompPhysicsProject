@@ -1,0 +1,1182 @@
+##### IMPORTS #####
+from datetime import datetime
+from scipy.integrate import solve_ivp
+import os
+import numpy as np
+import sympy as sp
+##### ENDS OF IMPORTS #####
+
+##### USER INPUTS #####
+
+#INPUT: Please set if you want to use geometrized or SI units
+geometrized_units = True
+
+#INPUT: Please define the symbols of your coordinate system with the timelike coordinate being the FIRST symbol.
+coords = sp.symbols("t x y z")
+
+for coord in coords: #DO NOT TOUCH THIS LOOP
+    globals()[str(coord)] = coord
+
+#INPUT: Please set if the spacelike coordinates represent a "length" or an "angle" where 1=angular and 0=length.
+is_angular = [
+    0 ,                                         # SPACELIKE COORD 1
+    0 ,                                         # SPACELIKE COORD 2
+    0                                           # SPACELIKE COORD 3
+]
+
+#INPUT: Please set the plotting ranges of the coordinates (only important for visualizing singularities) and types of singularities to plot.
+coordinate_ranges = [
+    (0 , 100) ,                                # TIMELIKE  COORD
+    (-50 , 50) ,                                  # SPACELIKE COORD 1
+    (-50, 50) ,                               # SPACELIKE COORD 2
+    (-50 , 50)                             # SPACELIKE COORD 3
+]
+calculate_CoordSingularities = False
+calculate_CurveSingularities = False
+
+#INPUT: Please define the transformation of your spatial coordinates to orthonormal cartesian coordinates.
+cartesian_transformation = [
+    x ,           # X = ?
+    y ,           # Y = ?
+    z                          # Z = ?
+]
+
+#INPUT: Please set the particle mass and charge.
+particle_mass = 1
+particle_charge = 0
+
+#INPUT: Please set the 4-potential of spacetime with each component in same order as defined by coords.
+Apot = sp.Matrix([
+    0 ,                                        # TIMELIKE  COMPONENT
+    0 ,                                        # SPACELIKE COMPONENT 1
+    0 ,                                        # SPACELIKE COMPONENT 2
+    0                                          # SPACELIKE COMPONENT 3
+])
+
+#INPUT: Please define the metric of spacetime with each column in same order as defined by coords, each vector is a row.
+dpar = 1000
+dperp = (1/3) * dpar
+deltatheta = .01
+thet = (-deltatheta / 2) + z*(deltatheta / .1)
+
+d11 = dpar*sp.cos(thet)**2 + dperp*sp.sin(thet)**2
+d22 = dpar*sp.sin(thet)**2 + dperp*sp.cos(thet)**2
+d12 = (dpar - dperp)*sp.cos(thet)*sp.sin(thet)
+d21 = (dpar - dperp)*sp.cos(thet)*sp.sin(thet)
+
+
+# Black hole mass (geometrized units)
+M = sp.Integer(5)
+
+# Distance from the black hole's center
+r = sp.sqrt(x**2 + y**2 + z**2)
+
+# Schwarzschild factor
+f = 1 - 2*M/r
+
+# Radial correction
+A = 1/f - 1
+
+# Original cardiac diffusion tensor
+D = sp.Matrix([
+    [d11, d12, 0],
+    [d21, d22, 0],
+    [0,   0,   dperp]
+])
+
+# Convert diffusion tensor to spatial metric
+G = D.inv()
+
+# Radial direction in the cardiac geometry
+R = sp.Matrix([x, y, z])
+
+# Normalize using the cardiac spatial metric
+norm2 = (R.T * G * R)[0]
+n = (G * R) / sp.sqrt(norm2)
+
+nx, ny, nz = n
+
+# Complete 4x4 cardiac-black-hole metric
+g = sp.Matrix([
+    [-f, 0, 0, 0],
+
+    [0,
+    G[0,0] + A*nx**2,
+    G[0,1] + A*nx*ny,
+    A*nx*nz],
+
+    [0,
+    G[1,0] + A*ny*nx,
+    G[1,1] + A*ny**2,
+    A*ny*nz],
+
+    [0,
+    A*nz*nx,
+    A*nz*ny,
+    G[2,2] + A*nz**2]
+])
+
+#INPUT: Please input if this metric should be physically viable.
+physically_viable = False
+
+#INPUT: Please input your initial 4-position
+ri = [
+    0 ,                                       # TIMELIKE  COMPONENT
+    30 ,                                      # SPACELIKE COMPONENT 1
+    0 ,                                 # SPACELIKE COMPONENT 2
+    0                                         # SPACELIKE COMPONENT 3
+]
+
+#INPUT: Please input your initial 3-velocity.
+vi = [
+    -.1 ,                                       # SPACELIKE COMPONENT 1
+    .1 ,                                       # SPACELIKE COMPONENT 2
+    0.0                                       # SPACELIKE COMPONENT 3
+]
+
+#INPUT: Please input the amount of "integration time" and the step size.
+lamTot = 100
+stepsize = .1
+
+#INPUT: Please input if you want a cloud of particles to also be integrated.
+make_cloud = False
+
+##### END OF USER INPUTS #####
+
+
+
+##### FUNCTIONS AND VARIABLES #####
+
+### Define some useful variables
+# Is particle massive?
+massless_particle = particle_mass == 0
+
+# What is the charge to mass ratio?
+if massless_particle == False:
+    qmrat = particle_charge / particle_mass
+else:
+    qmrat = None
+
+# Create dictionary of coordinate information
+coordinate_info = {
+    "coords" : coords ,
+    "ranges" : {
+        str(coords[0]) : coordinate_ranges[0],
+        str(coords[1]) : coordinate_ranges[1],
+        str(coords[2]) : coordinate_ranges[2],
+        str(coords[3]) : coordinate_ranges[3]
+    } ,
+    "is_angular" : is_angular ,
+    "geometrized_units" : geometrized_units
+}
+
+# Constants if needed
+c = 299792458 #m/s
+G = 6.67430e-11 #Nm^2/kg^2
+
+
+### Define function for calculation of the Christoffel symbols
+# def calcChristoffel(g , indices , coords):
+
+#     # Find g inverse
+#     ginv = g.inv()
+
+#     # Initialize connection coefficients as a 4x4x4 array of zeros
+#     christoffel = sp.MutableDenseNDimArray.zeros(4 , 4 , 4)
+
+#     # Calculate coefficients using the Levi-Civita connection:
+#     # Γ^m_np = .5 * g^ms * (deriv_p[g_sn] + deriv_n[g_sp] - deriv_s[g_np])
+#     for mu in range(0 , 4):
+#         for nu in range(0 , 4):
+#             for rho in range(0 , 4):
+#                 expr = 0
+#                 for sigma in range(0 , 4):
+#                     expr += .5 * ginv[mu , sigma] * (
+#                         sp.diff(g[sigma , nu] , indices[rho]) +
+#                         sp.diff(g[sigma , rho] , indices[nu]) -
+#                         sp.diff(g[nu , rho] , indices[sigma])
+#                     )
+
+#                 christoffel[mu , nu , rho] = expr
+
+#     # Convert christoffel into a function that can sub values into the variables if required
+#     Gamma_Function = [[[
+#         sp.lambdify(coords , christoffel[mu , nu , rho] , "numpy") for rho in range(0 , 4)]
+#             for nu in range(0 , 4)]
+#             for mu in range(0 , 4)]
+
+#     return (Gamma_Function , ginv , christoffel) <--- Legacy code, inefficient when using SI units
+
+### Define a new function to get the numeric Christoffels
+def calcChristoffel(g , indices , coords):
+
+    # Lambdify the metric itself
+    metric_fn = sp.lambdify(coords , g , modules = "numpy")
+
+    # Lambdify the derivatives of the metric ie dg/dx^k
+    dg_fn = [
+        sp.lambdify(
+            coords ,
+            g.diff(coords[k]) ,
+            modules = "numpy"
+        )
+        for k in range(len(coords))
+    ]
+
+    # Calculate the connection at this position using this subfunc
+    def Connections(position):
+        position = np.asarray(position , dtype = float)
+
+        g_num = np.asarray(
+            metric_fn(*position) , dtype = float
+        )
+        dg_num = np.asarray(
+            [fn(*position) for fn in dg_fn] ,
+            dtype = float
+        )
+
+        # Check metric and derivatives are finite
+        if not np.all(np.isfinite(g_num)):
+            raise FloatingPointError(
+                f"Error: Metric is non-finite at position {position}!"
+            )
+        if not np.all(np.isfinite(dg_num)):
+            raise FloatingPointError(
+                f"Error: Metric derivatives non-finite at position {position}!"
+            )
+
+        # Initialize the connections
+        Gamma = np.zeros((4 , 4 , 4) , dtype = float)
+
+        for nu in range(0 , 4):
+            for rho in range(0 , 4):
+                # Full LCC: Gamma^rho_munu = .5g^sigmarho(d_mu*g_nusigma + d_nu*g_musigma - d_sigma*g_munu
+                # Rearrange, then we get that:
+                # Gamma^sigma_nurho * g_musigma = .5 * (d_rho*g_sigmanu + d_nu*g_sigmarho - d_sigma*g_nurho
+
+                # Get right hand side of eq
+                rhs = .5 * (
+                    dg_num[rho , : , nu] + dg_num[nu , : , rho] - dg_num[: , nu , rho]
+                )
+
+                # Solve for Gamma with linalg solve
+                Gamma[: , nu , rho] = np.linalg.solve(
+                    g_num , rhs
+                )
+
+        return Gamma
+
+    # Retain ginv for posterity sake
+    print("Starting inverse metric calculation...", flush=True)
+
+    ginv = g.inv(method="ADJ")
+
+    print("Inverse metric successfully calculated!", flush=True)
+
+    return Connections , ginv , None
+
+# New symbolic christoffel function
+def calcChristoffelSym(g , ginv , indices , coords):
+
+    # Calculate coefficients symbolically using the Levi-Civita connection:
+    christoffel = sp.MutableDenseNDimArray.zeros(4, 4, 4)
+    # Γ^m_np = .5 * g^ms * (deriv_p[g_sn] + deriv_n[g_sp] - deriv_s[g_np])
+    for mu in range(0, 4):
+        for nu in range(0, 4):
+            for rho in range(0, 4):
+                expr = 0
+                for sigma in range(0, 4):
+                    expr += .5 * ginv[mu, sigma] * (
+                            sp.diff(g[sigma, nu], indices[rho]) +
+                            sp.diff(g[sigma, rho], indices[nu]) -
+                            sp.diff(g[nu, rho], indices[sigma])
+                    )
+
+                christoffel[mu, nu, rho] = expr
+
+    return christoffel
+
+
+### Define function for calculation of the Faraday tensor (symbolic only now)
+def calcFaraday(Apot , indices , coords , ginv):
+
+    # Initialize the Faraday tensor as a 4x4 array of zeros
+    F_2covar = sp.MutableDenseNDimArray.zeros(4 , 4)
+
+    # Calculate Faraday components according to:
+    # F_munu = deriv_mu[A_nu] - deriv_nu[A_mu]
+    for mu in range(0 , 4):
+        for nu in range(0 , 4):
+            F_2covar[mu , nu] = (
+                sp.diff(Apot[nu] , indices[mu]) -
+                sp.diff(Apot[mu] , indices[nu])
+            )
+
+    # Now we must raise an index of the Faraday tensor since Lorentz force requires
+    # LorentzForce ~ F^mu_nu * u^nu
+    F_1covar1contravar = sp.MutableDenseNDimArray.zeros(4 , 4)
+
+    for mu in range(0 , 4):
+        for nu in range(0 , 4):
+            expr = 0
+            for alpha in range(0 , 4):
+                expr += (
+                    ginv[mu , alpha] * F_2covar[alpha , nu]
+                )
+            F_1covar1contravar[mu , nu] = expr
+
+    # Make Faraday tensor a function for future use
+    F_Function = [[
+        sp.lambdify(coords , F_1covar1contravar[mu , nu] , "numpy") for nu in range(0 , 4)]
+        for mu in range(0 , 4)]
+
+    return (F_Function , F_2covar) #Save the 2covar in case we want to viz the EM fields in animation
+
+### Define function to efficiently get numeric Faraday terms
+def calcFaradayNumeric(Apot , g , indices , coords):
+
+    # Numeric function for covariant 4pot
+    A_fn = [
+        sp.lambdify(coords , Apot[mu] , modules = 'numpy') for mu in range(0 , 4)
+    ]
+
+    # Numeric function for derivatives of Apot
+    dA_fn = [
+        [
+            sp.lambdify(
+                coords ,
+                sp.diff(Apot[nu] , indices[mu]) ,
+                modules = "numpy"
+            )
+            for nu in range(0 , 4)
+        ]
+        for mu in range(0 , 4)
+    ]
+
+    # Numerical metric as well
+    g_fn = sp.lambdify(coords , g , modules = 'numpy')
+
+    def Faraday(position):
+        position = np.asarray(position , dtype = float)
+
+        # Evaluate metric and potential derivs at position
+        g_num = np.asarray(g_fn(*position) , dtype = float)
+        dA_num = np.asarray([
+            [dA_fn[mu][nu](*position) for nu in range(0 , 4)]
+            for mu in range(0 , 4)
+        ])
+
+        # Check metric and potential calcs for finite values
+        if not np.all(np.isfinite(g_num)):
+            raise FloatingPointError(
+                f"Error: Metric is non-finite at position {position}!"
+            )
+        if not np.all(np.isfinite(dA_num)):
+            raise FloatingPointError(
+                f"Error: 4-potential derivatives not finite at position {position}!"
+            )
+
+        # Get faraday by F_munu = A_nud_mu - A_mud_nu
+        F_cov = dA_num - dA_num.T
+
+        # F^mu_nu = g^mualpha F_alphanu --> F_mixed*g = F_cov solve for F_mixed
+        # Use linalg solve (more efficient)
+        F_mixed = np.linalg.solve(g_num , F_cov)
+
+        if not np.all(np.isfinite(F_mixed)):
+            raise FloatingPointError(
+                f"Error: Mixed Faraday tensor non finite at position {position}!"
+            )
+
+        return F_mixed
+
+    return Faraday
+
+
+### Define function for calculation of the Riemann tensor
+def calcRiemann(christoffels , coords , indices):
+
+    # Initialize the Riemann tensor as a 4x4x4x4 array
+    Riemann = sp.MutableDenseNDimArray.zeros(4 , 4 , 4 , 4)
+
+    # Calculate the Riemann tensor according to:
+    # R^rho_sigmamunu = d_mu Gamma^rho_nusigma - d_nu Gamma^rho_musigma + Gamma^rho_mulambda * Gamma^lambda_nusigma - Gamma^rho_nulambda * Gamma^lambda_musigma
+    for a in range (0 , 4):
+        for b in range (0 , 4):
+            for c in range(0 , 4):
+                for d in range(0 , 4): #abc are lower, d is upper
+                    expr = 0
+                    for e in range(0 , 4):
+                        expr += (
+                            christoffels[e , a , c] * christoffels[d , b , e] -
+                            christoffels[e , a , b] * christoffels[d , c , e]
+                        )
+                    Riemann[d , a , b , c] = (
+                            sp.diff(christoffels[d , a , c] , indices[b]) -
+                            sp.diff(christoffels[d , a , b] , indices[c]) +
+                            expr )
+
+    # Make tensor have a functional version too
+    Rie_Function = [[[[
+        sp.lambdify(coords , Riemann[d , a , b , c] , "numpy") for d in range(0 , 4)]
+        for c in range(0 , 4)]
+        for b in range(0 , 4)]
+        for a in range(0 , 4)]
+
+    return (Riemann , Rie_Function)
+
+
+### Define function for calculation of the Ricci tensor
+def calcRicciT(Riemann , coords):
+
+    # Calculate Ricci tensor according to:
+    # R_munu = R^a_muanu
+    RicciT = sp.MutableDenseNDimArray.zeros(4, 4)
+    for mu in range(0, 4):
+        for nu in range(0, 4):
+            expr = 0
+            for a in range(0, 4):
+                expr += (
+                    Riemann[a, mu, a, nu]
+                )
+            RicciT[mu, nu] = expr
+
+    # Create functional version
+    RicciT_Function = [[
+        sp.lambdify(coords , RicciT[mu , nu] , "numpy") for nu in range(0 , 4)]
+        for mu in range(0 , 4)]
+
+    return (RicciT , RicciT_Function)
+
+
+### Define function for calculation of the Ricci scalar
+def calcRicciS(RicciT , ginv , coords):
+
+    # Calculate Ricci scalar according to:
+    # R = R^mu_mu = R_munu * g^munu
+    RicciS = 0
+    for mu in range(0, 4):
+        for nu in range(0, 4):
+            RicciS += RicciT[mu, nu] * ginv[mu, nu]
+
+    # Create functional version
+    RicciS_Function = sp.lambdify(coords , RicciS , "numpy")
+
+    return (RicciS , RicciS_Function)
+
+
+### Define function for calculation of the Kretschmann scalar
+def calcKret(Riemann , g , ginv , coords):
+
+    # Create a fully covariant RiemannT
+    # R^e_abc * g_ed = R_abcd
+    R_fullcovar = sp.MutableDenseNDimArray.zeros(4 , 4 , 4 , 4)
+    for d in range(0 , 4):
+        for a in range(0 , 4):
+            for b in range(0 , 4):
+                for c in range(0 , 4):
+                    expr = 0
+                    for e in range(0 , 4):
+                        expr += Riemann[e , a , b , c] * g[e , d]
+                    R_fullcovar[a , b , c , d] = expr
+
+    # Create a fully contravariant RiemannT
+    # R^d_fhi * g^fa * g^ib * g^hc = R^abcd
+    R_fullcontra = sp.MutableDenseNDimArray.zeros(4 , 4 , 4 , 4)
+    for d in range(0 , 4):
+        for a in range(0 , 4):
+            for b in range(0 , 4):
+                for c in range(0 , 4):
+                    expr = 0
+                    for f in range(0 , 4):
+                        for i in range(0 , 4):
+                            for h in range(0 , 4):
+                                for k in range(0 , 4):
+                                    expr += (
+                                        ginv[a , f] * ginv[b , i] * ginv[c , h] * ginv[d , k] *
+                                        R_fullcovar[f , i , h , k]
+                                    )
+                    R_fullcontra[a , b , c , d] = expr
+
+    # Contract to get the scalar
+    Kret = 0
+    for a in range(0 , 4):
+        for b in range(0 , 4):
+            for c in range(0 , 4):
+                for d in range(0 , 4):
+                    Kret += R_fullcovar[a , b , c , d] * R_fullcontra[a , b , c , d]
+
+    # Create functional version
+    Kret = sp.factor(
+        sp.cancel(
+            sp.simplify(Kret)
+        )
+    )
+    Kret_Function = sp.lambdify(coords , Kret , "numpy")
+
+    return (Kret , Kret_Function)
+
+
+### Define function to determine the initial timelike component of the 4-velocity
+def findUt(is_null , r , v , g , indices):
+
+    # There are two normalization conditions for 4-velocity:
+    # 1. If particle is massive, u^2 = -1 or -c^2
+    # 2. If particle is massless, u^2 = 0
+
+    if is_null:
+        condition = 0
+    elif geometrized_units:
+        condition = -1
+    else:
+        condition = -c**2
+
+    # Sub in initial positions into the metric
+    subs_dict = {
+        indices[0] : r[0] ,
+        indices[1] : r[1] ,
+        indices[2] : r[2] ,
+        indices[3] : r[3]
+    }
+    numeric_g = g.subs(subs_dict)
+
+    # Initialize the unknown ut
+    ut = sp.symbols('ut' , positive = True)
+    u = [ut , v[0] , v[1] , v[2]]
+
+    # Take the inner product of u with itself according to
+    # u^2 = g_munu * u^mu * u^nu
+    expr = 0
+    for mu in range(0 , 4):
+        for nu in range(0 , 4):
+            expr += u[mu] * u[nu] * numeric_g[mu, nu]
+
+    # Make the experession an equation by setting it equal to condition
+    inner_product_constraint = sp.Eq(expr , condition)
+
+    # Solve for ut
+    time_part = sp.solve(inner_product_constraint , ut)
+
+    # Check if a solution was found; if not, indicate singularity failure
+    if len(time_part) == 0:
+        print("Error in normalizing initial ut!")
+        return np.nan
+
+    return float(time_part[0])
+
+
+### Define function to verify if given metric is physically allowed
+def verifyMetric(g , ri , indices):
+
+    # A valid spacetime metric is
+    # 1. Can be represented as a 4x4 matrix
+    # 2. Symmetric and real
+    # 3. Has a non-zero determinant
+    # 4. Has a Lorentzian signature (this program shall assume 1 negative eigenvalue and 3 positive eigenvalues for a (-,+,+,+) signature)
+
+    # Is this metric symmetric?
+    assert g.is_symmetric() , "Error: This metric is not symmetric!"
+
+    # Is this metric nonsingular?
+    assert g.det() != 0 , "Error: This metric is singular!"
+
+    # Does this metric have the correct signature?
+    check_negative = False
+
+    subs_dict = {
+        indices[0] : ri[0] ,
+        indices[1] : ri[1] ,
+        indices[2] : ri[2] ,
+        indices[3] : ri[3]
+    }
+
+    g_initial = g.subs(subs_dict)
+    # eigs = g_initial.eigenvals()
+
+    # for (key , value) in eigs.items():
+
+    #     if key < 0:
+    #         if value == 1:
+    #             check_negative = True
+
+    # assert check_negative , "Error: This metric does not have the correct signature!" <--- Old legacy code, only assumes geometrized
+
+    # To account for possibility of SI units, need to scale g so that the eigenvalue calculation doesn't fail due to resource exhaust
+    g_numeric = np.array(g_initial.evalf(30) , dtype = float)
+    row_scales = np.max(np.abs(g_numeric) , axis = 1)
+    assert np.all(row_scales > 0) , "Error: Metric is singular at initial position!"
+
+    D = np.diag(1 / row_scales**.5)
+    g_scaled = D @ g_numeric @ D
+    eigs = np.linalg.eigvals(g_scaled)
+
+    # Check for 1 negative and 3 positive eigenvalues
+    tol = 1e-10 #tolerance
+    num_negative = np.sum(eigs < -tol)
+    num_positive = np.sum(eigs > tol)
+    assert num_negative == 1 and num_positive == 3 , "Error: This metric does not have the correct signature!"
+
+
+### Define function to detect coordinate and "real" singularities in the metric
+def findSings(g , ginv , christoffels , indices , coords , doCoordS , doCurveS):
+
+    ### Check One: Do any coordinate values cause g to be singular
+    if doCoordS == False:
+        det_singularities = {str(coord) : None for coord in coords}
+        metric_singularities = {str(coord) : None for coord in coords}
+
+    else:
+        # Find det(g)
+        detg = sp.factor(g.det())
+
+        # Solve for when det(g) = 0
+        det_singularities = {}
+
+        for coord in coords:
+
+            try:
+                solutions = sp.solve(
+                    sp.Eq(detg , 0) ,
+                    coord
+                )
+
+                if solutions:
+                    det_singularities[str(coord)] = solutions
+
+            except Exception:
+                det_singularities[str(coord)] = (
+                    "No solution to det(g) = 0"
+                )
+
+
+        ### Check Two: Do any components of g have possible areas where they are undefined?
+        metric_singularities = {}
+
+        for mu in range(0 , 4):
+            for nu in range(0 , 4):
+
+                expr = sp.factor(g[mu , nu])
+
+                # Ignore if g_munu = 0
+                if expr == 0:
+                    continue
+
+                # For each coordinate see if singular points exist
+                component_singularities = {}
+                for coord in coords:
+
+                    try:
+                        singular_points = sp.singularities(
+                            expr ,
+                            coord
+                        )
+
+                        if singular_points != sp.EmptySet:
+                            component_singularities[str(coord)] = (
+                                singular_points
+                            )
+
+                    except Exception:
+                        # Continue if component has no singular value
+                        continue
+
+                # Label singularities by correct index
+                if component_singularities:
+
+                    metric_singularities[(mu , nu)] = (
+                        component_singularities
+                    )
+
+
+    ### Check Three: Check for real singularities using a curvature invariant
+    if doCurveS == False:
+        K_singularities = {str(coord) : None for coord in coords}
+    else:
+        # Calculate Riemann tensor
+        (R , R_Function) = calcRiemann(christoffels = christoffels , coords = coords , indices = indices)
+
+        # Calculate Kretschmann scalar
+        (K , K_Function) = calcKret(Riemann = R , g = g , ginv = ginv , coords = coords)
+
+        # Calculate singularities of K
+        K_singularities = {}
+
+        for coord in coords:
+
+            try:
+                singular_points = sp.singularities(
+                    K ,
+                    coord
+                )
+
+                if singular_points != sp.EmptySet:
+                    K_singularities[str(coord)] = (
+                        singular_points
+                    )
+
+            except Exception:
+                pass
+
+
+    ### Finally return as large dictionary
+    return {
+        "det_singularities": det_singularities ,
+        "metric_singularities": metric_singularities ,
+        "K_singularities": K_singularities
+    }
+
+
+### Define function to calculate the coordinate 3-speed of the particle
+def find3speed(lam , y , g , indices):
+
+    # Initialize speed list
+    farvels = []
+
+    # Iterate for each step in affine param
+    for i in range(len(lam)):
+
+        # Define 4pos and 4vel
+        pos = y[:4 , i]
+        u = y[4:8 , i]
+
+        # Find metric at this position
+        subs_dict = {
+            indices[0] : pos[0] ,
+            indices[1] : pos[1] ,
+            indices[2] : pos[2] ,
+            indices[3] : pos[3]
+        }
+
+        numeric_g = np.asarray(
+            g.subs(subs_dict) ,
+            dtype = float
+        )
+
+        # The coordinate three speed is given as v^2 = g_ij * (dx^i/dt) * (dx^j/dt) where t is timelike coord
+        # But dx^i/dt = dx^a/dlam * dlam/dt = u[a] * (u[0])^-1
+        expr = 0
+        for i in range(1 , 4):
+            for j in range(1 , 4):
+                expr += numeric_g[i , j] * (u[i] * u[0]**-1) * (u[j] * u[0]**-1)
+        farvels.append(expr**.5)
+
+    return farvels
+
+
+### Define function to calculate the local 3-speed of the particle
+def findLoc3speed(lam , y , g , indices):
+
+    # Initialize velo array
+    nearvels = []
+
+    # Iterate for each affine parameter step
+    for k in range(len(lam)):
+
+        # Obtain the particle 4position and 4velocity
+        pos = y[:4 , k]
+        u = y[4:8 , k]
+
+        # Obtain the metric at this position
+        subs_dict = {
+            indices[0] : pos[0] ,
+            indices[1] : pos[1] ,
+            indices[2] : pos[2] ,
+            indices[3] : pos[3]
+        }
+
+        numeric_g = np.asarray(
+            g.subs(subs_dict) ,
+            dtype = float
+        )
+
+        # The local 3 speed is measured by a stationary observer whose 4-velo is [1,0,0,0] = uobs (or [c,0,0,0])
+        # Thus uobs^2 = -1 (or -c^2) = g_munu * u[mu] * u[nu] = g_tt * u[t]^2
+        g00 = numeric_g[0 , 0]
+
+        if geometrized_units:
+            uobs = np.array([
+                1 / (-1 * g00)**.5 ,
+                0 ,
+                0 ,
+                0
+            ])
+            norm = 1.0
+        else:
+            uobs = np.array([
+                c / (-1 * g00)**.5 ,
+                0 ,
+                0 , 
+                0
+            ])
+            norm = c**2
+
+        # Lower the index of the 4velocity
+        # u_mu = g_munu * u^nu
+        uobs_lower = np.zeros(4)
+        for mu in range(0 , 4):
+            expr = 0
+            for nu in range(0 , 4):
+                expr += numeric_g[mu , nu] * uobs[nu]
+            uobs_lower[mu] = expr
+
+        # Contracting the observer 4-velo with the particle 4-velo gives a measure of energy; in geometrized units just gives Lorentz factor
+        # We can safely just do a simple dot product since lowering the index accounted for the metric
+        lor_fac = -1 * np.dot(
+            uobs_lower ,
+            u
+        ) / norm 
+
+        # # Find local speed (lor_fac = sqrt(1 / 1-v^2))
+        # v_local = np.sqrt(
+        #     1 - (1 / lor_fac**2))
+
+        # nearvels.append(v_local) <-- Legacy code, only works for geometrized units
+        
+        # Find the squared geometrized speed
+        speed_fraction_sq = 1.0 - 1.0 / lor_fac**2
+        speed_fraction_sq = max(0.0 , speed_fraction_sq)
+
+        # Convert correctly based on if need SI or geometrized
+        if geometrized_units:
+            v_local = speed_fraction_sq**.5
+        else:
+            v_local = c * speed_fraction_sq**.5
+
+        nearvels.append(v_local)
+
+    return nearvels
+
+
+### Define function to calculate the coordinate acceleration of the particle
+def findAccel(sol , change_of_state):
+
+    # Initialize the acceleration container
+    accelerations = np.zeros((4 , len(sol.t)))
+
+    # Calculate using change_of_state
+    for i in range(len(sol.t)):
+
+        state = sol.y[: , i]
+
+        derivatives = change_of_state(
+            sol.t[i] ,
+            state
+        )
+
+        # Only take the "acceleration" terms
+        accelerations[:, i] = derivatives[4:8]
+
+    return accelerations
+
+
+### Define function to integrate the geodesic equations
+def integrateGeodesics(g , F , Fviz , qmrat , christoffels , christoffelsviz ,
+                       indices , cur_pos , cur_vel , sing_data , coordinate_info ,
+                       runtime , stepsize ,
+                       plot_deviation = False , deviation_sep = .1):
+
+    # Define the initial state vector
+    initial_state = [
+        cur_pos[0] ,
+        cur_pos[1] ,
+        cur_pos[2] ,
+        cur_pos[3] ,
+        cur_vel[0] ,
+        cur_vel[1] ,
+        cur_vel[2] ,
+        cur_vel[3] ,
+    ]
+
+    # Define the differential equation
+    def change_of_state(lam , state):
+
+        # Sub in values into Christoffels
+        subs_dict = {
+            indices[0] : state[0] ,
+            indices[1] : state[1] ,
+            indices[2] : state[2] ,
+            indices[3] : state[3] ,
+        }
+
+        # numeric_christos = np.zeros((4 , 4 , 4))
+        # for mu in range(0 , 4):
+        #     for nu in range(0 , 4):
+        #         for rho in range(0 , 4):
+        #             numeric_christos[mu , nu , rho] = christoffels[mu][nu][rho](state[0] , state[1] , state[2] , state[3]) <--- Old legacy code, sympy hates doing this if numbers are big (SI units)
+
+        # New numeric christoffel calculation
+        numeric_christos = christoffels(state[0:4])
+        
+        # Unpack state for organization
+        pos = [state[0] , state[1] , state[2] , state[3]]
+        u = [state[4] , state[5] , state[6] , state[7]]
+
+        # Get metric at this position
+        numeric_g = g.subs(subs_dict)
+
+        # Print 4-velo magnitude at this position for bookkeeping
+        expr = 0
+        for mu in range(0 , 4):
+            for nu in range(0 , 4):
+                expr += numeric_g[mu , nu] * u[mu] * u[nu]
+        print(f"4-Velocity magnitude is {expr}")
+
+        # Construct the acceleration components of the state change using the geodesic equation
+        # a[mu] = (-Γ^mu_alphabeta * u[alpha][beta]) + (q/m * F^mu_nu * u[nu])
+        accel_list = []
+
+        if massless_particle == True or particle_charge == 0:
+            for k in range(0 , 4):
+                accel = 0
+                for mu in range(0 , 4):
+                    for nu in range(0 , 4):
+                        accel += -1 * numeric_christos[k , mu , nu] * u[mu] * u[nu]
+                accel_list.append(accel)
+
+        else:
+
+            # # Get Faraday tensor at this position
+            # numeric_F = np.zeros((4 , 4))
+            # for mu in range(0 , 4):
+            #     for nu in range(0 , 4):
+            #         numeric_F[mu , nu] = F[mu][nu](state[0] , state[1] , state[2] , state[3])
+
+            # # Do geodesic eq
+            # for k in range(0 , 4):
+            #     accel = 0
+            #     for mu in range(0 , 4):
+            #         for nu in range(0 , 4):
+            #             accel += (-1 * numeric_christos[k , mu , nu] * u[mu] * u[nu]) + (qmrat * numeric_F[k , nu] * u[nu])
+            #     accel_list.append(accel) <--- Old legacy, oops the Lorentz force is getting added 4 times lol
+
+            # Get Faraday tensor at this position and form geodesic eq with Lorentz
+            numeric_F = F(state[0:4])
+
+            for k in range(0 , 4):
+                accel = 0
+
+                # Gravitational effects
+                for mu in range(0 , 4):
+                    for nu in range(0 , 4):
+                        accel += -1 * (numeric_christos[k , mu , nu] * u[mu] * u[nu])
+
+                # Electromagnetic effects
+                for nu in range(0 , 4):
+                    accel += qmrat * numeric_F[k , nu] * u[nu]
+
+                accel_list.append(accel)
+
+        # Return the change in state vector
+        return [
+            u[0] ,
+            u[1] ,
+            u[2] ,
+            u[3] ,
+            accel_list[0] ,
+            accel_list[1] ,
+            accel_list[2] ,
+            accel_list[3] ,
+        ]
+
+    # Run radau integration
+    sol = solve_ivp(
+        fun = change_of_state ,
+        t_span = (0 , runtime) ,
+        y0 = initial_state ,
+        method = 'Radau' ,
+        max_step = stepsize
+    )
+
+    # Run particle cloud integration if required
+    deviation_y = 0
+    if plot_deviation == True:
+
+        # Store particle solutions
+        deviation_sols = []
+
+        # We generate 6 new particles whose initial positions are deviated from + and - coord directions
+        def perturbInitialState(cur_pos, cur_vel, deviation_sep):
+
+            perturbed_initial_states = []
+
+            for coordinate_index in range(1, 4):
+                # + direction
+                plus_pos = np.asarray(cur_pos, dtype=float).copy()
+                plus_pos[coordinate_index] += deviation_sep
+
+                plus_ut = findUt(
+                    massless_particle,
+                    plus_pos,
+                    cur_vel[1:4],
+                    g,
+                    indices
+                )
+                plus_vel = np.array([
+                    plus_ut,
+                    cur_vel[1],
+                    cur_vel[2],
+                    cur_vel[3]
+                ])
+
+                plus_state = np.concatenate([
+                    plus_pos,
+                    plus_vel
+                ])
+
+                perturbed_initial_states.append(plus_state)
+
+                # - direction
+                minus_pos = np.asarray(cur_pos, dtype=float).copy()
+                minus_pos[coordinate_index] -= deviation_sep
+
+                minus_ut = findUt(
+                    massless_particle,
+                    minus_pos,
+                    cur_vel[1:4],
+                    g,
+                    indices
+                )
+                minus_vel = np.array([
+                    minus_ut,
+                    cur_vel[1],
+                    cur_vel[2],
+                    cur_vel[3]
+                ])
+
+                minus_state = np.concatenate([
+                    minus_pos,
+                    minus_vel
+                ])
+
+                perturbed_initial_states.append(minus_state)
+
+            return perturbed_initial_states
+        perturbed_initial_states = perturbInitialState(cur_pos, cur_vel, deviation_sep)
+
+        for neighbor_initial_state in perturbed_initial_states:
+            neighbor_sol = solve_ivp(
+                fun = change_of_state ,
+                t_span = (0 , runtime) ,
+                y0 = neighbor_initial_state ,
+                method = 'Radau' ,
+                max_step = stepsize
+            )
+            deviation_sols.append(neighbor_sol)
+
+        # Put cloud on central particle's integration grid
+        deviation_y = np.zeros(
+            (
+                len(deviation_sols) ,
+                8 ,
+                len(sol.t)
+            )
+        )
+
+        for particle_index , neighbor_sol in enumerate(deviation_sols):
+            for component in range(0 , 8):
+                deviation_y[
+                    particle_index,
+                    component,
+                    :
+                ] = np.interp(
+                    sol.t ,
+                    neighbor_sol.t ,
+                    neighbor_sol.y[component]
+                )
+
+    # Make 3speed array
+    spatvel = find3speed(lam = sol.t , y = sol.y , g = g , indices = indices)
+
+    # Make local 3speed array
+    locvel = findLoc3speed(lam = sol.t , y = sol.y , g = g , indices = indices)
+
+    # Create filename for .npz file of sim
+    now = datetime.now()
+    file_timestamp = now.strftime("%Y%m%d_%H%M%S")
+    FILENAME = os.path.join(f"geodesicOutput_{file_timestamp}.npz")
+
+    # Save .npz
+    np.savez(
+        FILENAME ,
+        t = sol.t ,
+        y = sol.y ,
+        christos = christoffelsviz ,
+        vel = spatvel ,
+        locvel = locvel ,
+        coords = [str(c) for c in coords] ,
+        coordinate_info = coordinate_info ,
+        cart_tran = cartesian_transformation ,
+        metric = g ,
+        apot = Apot ,
+        F = Fviz ,
+        particle_info = (particle_mass , particle_charge) ,
+        sing_data = sing_data ,
+        init = [cur_pos , cur_vel] ,
+        cloudinfo = deviation_y ,
+    )
+
+    # Return solution
+    return sol
+
+##### END OF FUNCTIONS AND VARIABLES #####
+
+
+
+
+##### RUN SIM #####
+### Check if metric is 4x4 and has the correct number of coordinates
+assert len(coords) == 4 , "Error: Not enough/too many coordinates!"
+assert g.shape == (4,4) , "Error: Metric is not 4x4!"
+
+### Create an indices dictionary
+indices = {i : coords[i] for i in range(0 , 4)}
+
+
+### Check for physically viable metric if required
+if physically_viable:
+    verifyMetric(g = g , ri = ri , indices = indices)
+    print("Metric is physically viable! Continuing...")
+
+print("Starting Christoffel calculation...", flush=True)
+### Calculate inverse metric and Christoffel symbols
+(Connections , ginv , ___) = calcChristoffel(g = g , indices = indices , coords = coords)
+
+print("Christoffel calculation complete!", flush=True)
+# Get symbolic version seperately
+ConnectionsSym = calcChristoffelSym(g = g , ginv = ginv , indices = indices , coords = coords)
+
+
+### Analyze metric for singularities
+singularity_data = findSings(g = g , ginv = ginv , christoffels = ConnectionsSym , indices = indices , coords = coords ,
+                             doCoordS=calculate_CoordSingularities , doCurveS=calculate_CurveSingularities)
+
+
+### Find initial ut
+ut_init = findUt(is_null = massless_particle , r = ri , v = vi , g = g , indices = indices)
+ui = [ut_init , vi[0] , vi[1] , vi[2]]
+
+
+### Calculate Faraday tensor
+___ , Fviz = calcFaraday(Apot = Apot , indices = indices , coords = coords , ginv = ginv)
+
+# Caluclate numeric version for more efficient calculation
+F = calcFaradayNumeric(Apot = Apot , g = g , indices = indices , coords = coords)
+
+
+### Integrate the geodesic equations
+sol = integrateGeodesics(g = g , F = F , Fviz = Fviz , qmrat = qmrat ,
+                         christoffels = Connections , christoffelsviz = ConnectionsSym ,
+                         indices = indices , cur_pos = ri , cur_vel = ui ,
+                         sing_data = singularity_data , coordinate_info = coordinate_info ,
+                         runtime = lamTot , stepsize = stepsize , plot_deviation = make_cloud)
+print(sol.message)
+print(sol.status)
+
+##### END OF RUN SIM #####
+
+
+
+
+
+
+
